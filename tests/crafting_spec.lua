@@ -123,7 +123,7 @@ t.test('detail parts switch off, but low confidence and its reasons always show'
 	t.eq(credited[#credited].text:find('AHledger'), nil)
 end)
 
-t.test('the ventures tab shows a low forecast confidence and its reasons', function()
+t.v2test('the ventures tab shows a low forecast confidence and its reasons', function()
 	local venture = {
 		name = 'V',
 		status = 'planning',
@@ -196,6 +196,11 @@ t.test('the selected recipe gets a panel; Plan venture starts one and opens the 
 	t.truthy(panel and panel:IsShown())
 	t.truthy(linesText(panel.lines):find('Cost'))
 	t.truthy(linesText(panel.lines):find(addon.window:Credit(), 1, true), 'the panel credits AHledger')
+	if t.isV1Only then
+		t.eq(panel.plan, nil, 'no Plan venture button without the V2 planner')
+		t.same(addon.errors, {})
+		return
+	end
 	panel.plan:Click()
 	local market = addon.store:Market(MARKET)
 	local venture = addon.Ventures.get(market, 1)

@@ -1,5 +1,6 @@
 -- A tiny test harness for luajit: no globals, no dependencies.
-local harness = { passed = 0, failed = 0, failures = {} }
+-- isV1Only: the release file set, without v2/ (luajit tests/run.lua --v1; run.lua sets it).
+local harness = { passed = 0, failed = 0, failures = {}, isV1Only = false, skipped = 0 }
 
 local ADDON_FILES = {
 	'Host/Tokens.lua',
@@ -27,11 +28,12 @@ local ADDON_FILES = {
 	'Engine/CostPool.lua',
 	'Engine/AuctionTracker.lua',
 	'Engine/MailMatcher.lua',
-	'Engine/Ventures.lua',
+	'Engine/VentureRecords.lua',
+	'v2/Engine/Ventures.lua',
 	'Engine/CraftCost.lua',
 	'Engine/Books.lua',
 	'Engine/OwnOnly.lua',
-	'Engine/Flips.lua',
+	'v2/Engine/Flips.lua',
 	'Engine/Advice.lua',
 	'Host/Theme.lua',
 	'Host/Tooltip.lua',
@@ -133,10 +135,32 @@ function harness.raises(fn, pattern)
 	end
 end
 
+--- The paths a run loads: all of them, or in a V1-only run those outside v2/ (the release set).
+--- @param paths string[]
+--- @return string[]
+function harness.addonPaths(paths)
+	local kept = {}
+	for _, path in ipairs(paths) do
+		if not (harness.isV1Only and path:find('^v2/')) then
+			kept[#kept + 1] = path
+		end
+	end
+	return kept
+end
+
+--- A test of V2 code (Flips, Ventures): skipped in a V1-only run, where v2/ is not loaded.
+function harness.v2test(name, fn)
+	if harness.isV1Only then
+		harness.skipped = harness.skipped + 1
+		return
+	end
+	harness.test(name, fn)
+end
+
 --- Loads the add-on's files into a fresh namespace, as the game would.
 function harness.loadAddon()
 	local ns = {}
-	for _, path in ipairs(ADDON_FILES) do
+	for _, path in ipairs(harness.addonPaths(ADDON_FILES)) do
 		local chunk = assert(loadfile(path))
 		chunk('Haggler', ns)
 	end

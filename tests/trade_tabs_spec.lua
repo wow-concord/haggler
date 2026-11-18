@@ -86,7 +86,7 @@ end
 
 -- Flips tab -------------------------------------------------------------------------------
 
-t.test('the Flips tab lists nothing until asked, then the vendor flip with its confidence', function()
+t.v2test('the Flips tab lists nothing until asked, then the vendor flip with its confidence', function()
 	local _, addon = start()
 	addon.window:Open('flips')
 	local flips = addon.window.containers.flips
@@ -108,7 +108,7 @@ t.test('the Flips tab lists nothing until asked, then the vendor flip with its c
 	t.same(addon.errors, {})
 end)
 
-t.test('the Flips tab counts out our listings the scan saw, and keeps those posted after it', function()
+t.v2test('the Flips tab counts out our listings the scan saw, and keeps those posted after it', function()
 	local function linenVendorFlip(postedAt)
 		local own = tracked(LINEN, 10, { qty = 5, remaining = 5, listed = 5, postedAt = postedAt })
 		local _, addon = start({ auctions = { [21] = own } })
@@ -126,7 +126,7 @@ t.test('the Flips tab counts out our listings the scan saw, and keeps those post
 	t.truthy(linenVendorFlip(NOW), "posted after the scan: the cheap linen is someone else's")
 end)
 
-t.test('flip lines show every reason that is not high', function()
+t.v2test('flip lines show every reason that is not high', function()
 	local _, addon = start()
 	local lines = addon.FlipsTab.lines({
 		kind = 'relist',
@@ -150,7 +150,7 @@ t.test('flip lines show every reason that is not high', function()
 	t.eq(lines[#lines].level, 'low')
 end)
 
-t.test('Buy on a flip opens the Buy tab on the item and searches it live at the auction house', function()
+t.v2test('Buy on a flip opens the Buy tab on the item and searches it live at the auction house', function()
 	local game, addon = start()
 	openAuctionHouse(game)
 	addon.window:Open('flips')
@@ -171,7 +171,7 @@ t.test('Buy on a flip opens the Buy tab on the item and searches it live at the 
 	t.same(addon.errors, {})
 end)
 
-t.test("the Flips tab leaves the player's own listings out", function()
+t.v2test("the Flips tab leaves the player's own listings out", function()
 	-- Linen's five units at 10 are a vendor flip until they are our own listing.
 	local function linenBuyPriceWith(auctions)
 		local _, addon = start({ auctions = auctions })

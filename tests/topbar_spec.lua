@@ -141,9 +141,16 @@ end)
 
 t.test('a shortcut opens the window on its tab', function()
 	local _, addon = start()
-	addon.topBar.shortcuts[3]:Click()
+	addon.topBar.shortcuts[2]:Click()
 	t.eq(addon.window:IsOpen(), true)
+	t.eq(addon.window.currentTabKey, 'sell')
+end)
+
+t.v2test('the V2 Flips tab adds its shortcut before Settings', function()
+	local _, addon = start()
+	addon.topBar.shortcuts[3]:Click()
 	t.eq(addon.window.currentTabKey, 'flips')
+	t.eq(addon.TopBarModel.SHORTCUTS[4].key, 'settings')
 end)
 
 t.test('a dragged bar keeps its place', function()

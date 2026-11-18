@@ -12,6 +12,7 @@
 	  TopBarModel.nextRule(ids, current, direction) -> id|nil   the rule switcher's cycle
 	  TopBarModel.profitTooltip(profit, mode, note) -> { line }
 	  TopBarModel.SHORTCUTS             the shortcut buttons, in order: { key, label, tab? }
+	                                    (the V2 Flips tab adds its own before settings)
 
 	Money is integer copper; text uses ns.TooltipLines.money, the add-on's one money format.
 ]]
@@ -29,7 +30,6 @@ TopBarModel.VISIBILITY = {
 TopBarModel.SHORTCUTS = {
 	{ key = 'frame', label = 'Haggler' },
 	{ key = 'queue', label = 'Sell', tab = 'sell' },
-	{ key = 'flips', label = 'Flips', tab = 'flips' },
 	{ key = 'settings', label = 'Settings' },
 }
 

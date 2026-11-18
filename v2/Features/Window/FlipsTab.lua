@@ -1,5 +1,6 @@
 --[[
-	Flips tab: listings in the last scan worth buying to sell again (Engine/Flips.lua): under
+	Flips tab (V2, left out of the release package; it adds the top bar's Flips shortcut):
+	listings in the last scan worth buying to sell again (Engine/Flips.lua): under
 	what a vendor pays, or under the default rule's value (a relist). The list runs when the
 	player asks (Find, a filter change), never when the tab is built: it reads the whole scan.
 
@@ -46,6 +47,18 @@ ns.window:AddTab({
 		refreshDetail(container, ctx)
 	end,
 })
+
+-- The top bar's Flips shortcut, before Settings; without this V2 tab the bar has none.
+do
+	local shortcuts = ns.TopBarModel.SHORTCUTS
+	local position = #shortcuts + 1
+	for index, shortcut in ipairs(shortcuts) do
+		if shortcut.key == 'settings' then
+			position = index
+		end
+	end
+	table.insert(shortcuts, position, { key = 'flips', label = 'Flips', tab = 'flips' })
+end
 
 --- The detail lines for a flip: what to buy, what it sells for, the expected profit and its
 --- confidence with every reason that is not high.

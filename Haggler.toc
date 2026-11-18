@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Haggler
-## Notes: Gold-making for WoW: Forever: crafting, selling, bags and flips. Prices from AHledger.
-## Version: 0.2.0-dev
+## Notes: Gold-making for WoW: Forever: crafting, selling and bags. Prices from AHledger.
+## Version: 0.1.0-dev
 ## IconTexture: Interface\AddOns\Haggler\media\icon.png
 ## Category: Concord
 ## Author: Eiluviann
@@ -11,6 +11,9 @@
 ## X-Credit: Prices from AHledger (https://ahledger.com)
 ## Dependencies: AHledger
 ## OptionalDeps: BagPad, Bagnon, Baganator
+
+# V2 files (v2/: Flips and Ventures) load in dev only: the BigWigs packager strips the
+# do-not-package blocks below and .pkgmeta leaves v2/ out of the release zip.
 
 # Bundled libraries (Libs/LICENSES.md)
 Libs\LibStub\LibStub.lua
@@ -57,11 +60,16 @@ Engine\Ledger.lua
 Engine\CostPool.lua
 Engine\AuctionTracker.lua
 Engine\MailMatcher.lua
-Engine\Ventures.lua
+Engine\VentureRecords.lua
+#@do-not-package@
+v2\Engine\Ventures.lua
+#@end-do-not-package@
 Engine\CraftCost.lua
 Engine\Books.lua
 Engine\OwnOnly.lua
-Engine\Flips.lua
+#@do-not-package@
+v2\Engine\Flips.lua
+#@end-do-not-package@
 Engine\Advice.lua
 
 # Shared services, then features (each registers its module)
@@ -91,9 +99,13 @@ Features\Window\RulesTab.lua
 Features\Window\SellTab.lua
 Features\Window\AuctionsTab.lua
 Features\Window\BuyTab.lua
-Features\Window\FlipsTab.lua
+#@do-not-package@
+v2\Features\Window\FlipsTab.lua
+#@end-do-not-package@
 Features\Window\LedgerTab.lua
-Features\Window\VenturesTab.lua
+#@do-not-package@
+v2\Features\Window\VenturesTab.lua
+#@end-do-not-package@
 Features\Compat.lua
 Features\Options.lua
 
