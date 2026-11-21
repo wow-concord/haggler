@@ -45,7 +45,7 @@ local WIDGET_SETTINGS = { gold = 'showGold', rule = 'showRule', scan = 'showScan
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local buildFrame, layout, applyVisibility, sessionProfit, cycleRule, runShortcut, openWindow
-local savePosition, placeFrame, moveFocus, paintFocus, shownButtons, applyFocusBinding, inputService
+local savePosition, placeFrame, moveFocus, paintFocus, shownButtons, allButtons, keepFocusOnShownWidget, applyFocusBinding, inputService
 local hookTooltip, updateFeed, isFeedOn, startTicker, playerKey
 
 local topBar = { places = {}, focusIndex = 1 }
@@ -119,6 +119,7 @@ ns.host.AddModule({
 		ns.wow:OffEvent('PLAYER_MONEY', EVENT_OWNER)
 		local input = inputService()
 		input:Unbind(MODULE_KEY)
+		paintFocus(topBar, nil)
 		input:ReleaseFocus(MODULE_KEY)
 		if topBar.feed then
 			topBar.feed:SetActive(false)
@@ -302,6 +303,25 @@ function layout(self)
 	end
 	self.frame:SetWidth(math.max(x - GAP + PADDING, BAR_HEIGHT))
 	self.order = order
+	keepFocusOnShownWidget(self)
+end
+
+-- A widget switched off takes its mark with it: the focus stays on a shown widget (the same
+-- place, or the last one), and with none shown the bar lets go of the pad.
+function keepFocusOnShownWidget(self)
+	local input = inputService()
+	if not input:HasFocus(MODULE_KEY) then
+		paintFocus(self, nil)
+		return
+	end
+	local count = #self.order
+	if count == 0 then
+		paintFocus(self, nil)
+		input:ReleaseFocus(MODULE_KEY)
+		return
+	end
+	self.focusIndex = math.min(math.max(self.focusIndex, 1), count)
+	paintFocus(self, self.focusIndex)
 end
 
 function applyVisibility(self, isShown)
@@ -313,6 +333,7 @@ function applyVisibility(self, isShown)
 		return
 	end
 	self.frame:Hide()
+	paintFocus(self, nil)
 	inputService():ReleaseFocus(MODULE_KEY)
 end
 
@@ -421,10 +442,24 @@ function moveFocus(self, step)
 	paintFocus(self, self.focusIndex)
 end
 
+-- Marks the shown widget at index and clears every other one, shown or not, so a widget
+-- switched off keeps no mark to show when it comes back.
 function paintFocus(self, index)
-	for at, button in ipairs(shownButtons(self)) do
-		button:SetSelected(at == index)
+	local focusedButton = index and shownButtons(self)[index] or nil
+	for _, button in ipairs(allButtons(self)) do
+		button:SetFocused(button == focusedButton)
 	end
+end
+
+function allButtons(self)
+	if not self.buttons then
+		return {}
+	end
+	local buttons = { self.buttons.gold, self.buttons.rule, self.buttons.scan }
+	for _, button in ipairs(self.shortcuts or {}) do
+		buttons[#buttons + 1] = button
+	end
+	return buttons
 end
 
 function shownButtons(self)

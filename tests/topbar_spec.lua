@@ -161,14 +161,145 @@ t.test('the focus binding gives the bar the pad; B leaves', function()
 	addon.host.Module('topbar'):SetSetting('focusKey', 'PADLSHOULDER')
 	t.truthy(game:PressKey('PADLSHOULDER'), 'focus key bound')
 	t.eq(addon.input:HasFocus('topbar'), true)
-	t.eq(addon.topBar.order[1].isSelected, true)
+	t.eq(addon.topBar.order[1].isFocused, true)
 	t.truthy(game:PressKey('PADDRIGHT'), 'd-pad bound')
-	t.eq(addon.topBar.order[2].isSelected, true)
-	t.eq(addon.topBar.order[1].isSelected, false)
+	t.eq(addon.topBar.order[2].isFocused, true)
+	t.eq(addon.topBar.order[1].isFocused, false)
 	t.truthy(game:PressKey('PAD2'), 'B bound')
 	t.eq(addon.input:HasFocus('topbar'), false)
 	t.eq(game:PressKey('PADDRIGHT'), false, 'd-pad given back')
 	t.eq(game:PressKey('PADLSHOULDER'), true, 'focus key stays')
+end)
+
+-- Compares one anchor field by field: a point holds its relative frame, which t.same would walk.
+local function expectPoint(region, index, expected)
+	local point = { region:GetPoint(index) }
+	for field = 1, #expected do
+		t.eq(point[field], expected[field], 'point ' .. index .. ' field ' .. field)
+	end
+end
+
+t.test('the focused widget shows the focus ring outside its edge (ring theme)', function()
+	local game, addon = start()
+	addon.host.Module('topbar'):SetSetting('focusKey', 'PADLSHOULDER')
+	game:PressKey('PADLSHOULDER')
+	local first, second = addon.topBar.order[1], addon.topBar.order[2]
+	local ring = first.focusRing
+	t.truthy(ring and ring:IsShown(), 'the ring shows on the focused widget')
+	local reach = 2 + 2 + 1 -- focus.ringWidth + focus.ringOffset + focus.ringGap (Banneret)
+	expectPoint(ring, 1, { 'TOPLEFT', first, 'TOPLEFT', -reach, reach })
+	expectPoint(ring, 2, { 'BOTTOMRIGHT', first, 'BOTTOMRIGHT', reach, -reach })
+	local ringColor = addon.theme:Color('color.focus.ring')
+	t.same(ring.edges[1].colorTexture, { ringColor.r, ringColor.g, ringColor.b, ringColor.a })
+	t.eq(second.focusRing == nil or not second.focusRing:IsShown(), true, 'one focus only')
+	game:PressKey('PADDRIGHT')
+	t.eq(ring:IsShown(), false, 'the ring leaves the old widget')
+	t.eq(second.focusRing:IsShown(), true, 'and moves to the next')
+	game:PressKey('PAD2')
+	t.eq(second.focusRing:IsShown(), false, 'leaving clears the ring')
+end)
+
+t.test("the focused widget also shows the chevron, its right edge on the widget's left edge", function()
+	local game, addon = start()
+	addon.host.Module('topbar'):SetSetting('focusKey', 'PADLSHOULDER')
+	local first, second = addon.topBar.order[1], addon.topBar.order[2]
+	local widthBefore = first:GetWidth()
+	game:PressKey('PADLSHOULDER')
+	local chevron = first.focusChevron
+	t.truthy(chevron and chevron:IsShown(), 'the chevron shows on the focused widget')
+	t.truthy(first.focusRing and first.focusRing:IsShown(), 'beside the ring')
+	expectPoint(chevron, 1, { 'RIGHT', first, 'LEFT', 0, 0 })
+	t.eq(chevron.width, 12)
+	t.eq(chevron.height, 28)
+	t.eq(first:GetWidth(), widthBefore, 'it overhangs: no gutter')
+	game:PressKey('PADDRIGHT')
+	t.eq(chevron:IsShown(), false, 'the chevron leaves the old widget')
+	t.eq(second.focusChevron:IsShown(), true, 'and moves to the next')
+	game:PressKey('PAD2')
+	t.eq(second.focusChevron:IsShown(), false, 'leaving clears the chevron')
+end)
+
+-- Every top-bar widget that shows a focus mark, shown or not.
+local function markedWidgets(topBar)
+	local marked = {}
+	local all = { topBar.buttons.gold, topBar.buttons.rule, topBar.buttons.scan }
+	for _, button in ipairs(topBar.shortcuts) do
+		all[#all + 1] = button
+	end
+	for _, button in ipairs(all) do
+		local isRingShown = button.focusRing ~= nil and button.focusRing:IsShown()
+		local isChevronShown = button.focusChevron ~= nil and button.focusChevron:IsShown()
+		if button.isFocused or isRingShown or isChevronShown then
+			marked[#marked + 1] = button
+		end
+	end
+	return marked
+end
+
+t.test('hiding the bar clears the focus mark, so showing it again shows none', function()
+	local game, addon = start()
+	local module = addon.host.Module('topbar')
+	module:SetSetting('focusKey', 'PADLSHOULDER')
+	game:PressKey('PADLSHOULDER')
+	module:SetSetting('visibility', 'hidden')
+	module:SetSetting('visibility', 'always')
+	t.eq(addon.input:HasFocus('topbar'), false)
+	t.eq(#markedWidgets(addon.topBar), 0, 'no mark without the focus')
+end)
+
+t.test('switching the module off clears the focus mark, so switching it on shows none', function()
+	local game, addon = start()
+	addon.host.Module('topbar'):SetSetting('focusKey', 'PADLSHOULDER')
+	game:PressKey('PADLSHOULDER')
+	addon.host.Disable('topbar')
+	addon.host.Enable('topbar')
+	t.eq(addon.input:HasFocus('topbar'), false)
+	t.eq(#markedWidgets(addon.topBar), 0, 'no mark without the focus')
+end)
+
+t.test('switching the focused widget off moves the focus to a shown one, and A presses it', function()
+	local game, addon = start()
+	local module = addon.host.Module('topbar')
+	module:SetSetting('focusKey', 'PADLSHOULDER')
+	game:PressKey('PADLSHOULDER')
+	local gold = addon.topBar.buttons.gold
+	module:SetSetting('showGold', false)
+	local marked = markedWidgets(addon.topBar)
+	t.eq(#marked, 1, 'one mark')
+	t.eq(marked[1], addon.topBar.order[1], 'on the first shown widget')
+	t.eq(gold.isFocused, false, 'the hidden widget keeps no mark')
+	local pressed
+	marked[1]:OnClick(function()
+		pressed = true
+	end)
+	game:PressKey('PAD1')
+	t.eq(pressed, true, 'A presses the marked widget')
+	module:SetSetting('showGold', true)
+	t.eq(#markedWidgets(addon.topBar), 1, 'showing it again brings no stale mark')
+end)
+
+t.test('switching off the widgets after the focus clamps it to the last shown one', function()
+	local game, addon = start()
+	local module = addon.host.Module('topbar')
+	module:SetSetting('focusKey', 'PADLSHOULDER')
+	game:PressKey('PADLSHOULDER')
+	game:PressKey('PADDLEFT') -- wraps to the last shortcut
+	module:SetSetting('showShortcuts', false)
+	local order = addon.topBar.order
+	local marked = markedWidgets(addon.topBar)
+	t.eq(#marked, 1, 'one mark')
+	t.eq(marked[1], order[#order], 'on the last shown widget')
+end)
+
+t.test('a disabled widget does not dim its focus mark', function()
+	local game, addon = start()
+	local ui = addon.Widgets.new(addon.wow, addon.theme)
+	local button = ui:Button(game.env.UIParent, 'Scan', 'ghost')
+	button:SetEnabled(false)
+	button:SetFocused(true)
+	t.eq(button:GetEffectiveAlpha(), addon.Widgets.DISABLED_ALPHA, 'the button dims')
+	t.eq(button.focusChevron:GetEffectiveAlpha(), 1, 'the chevron does not')
+	t.eq(button.focusRing:GetEffectiveAlpha(), 1, 'nor the ring')
 end)
 
 t.test('A presses the focused widget', function()
@@ -203,9 +334,9 @@ t.test('leaving the focus in combat frees the keys when combat ends', function()
 	game.inCombat = true
 	game:PressKey('PAD2')
 	t.eq(addon.input:HasFocus('topbar'), false)
-	local selectedBefore = addon.topBar.order[1].isSelected
+	local focusedBefore = addon.topBar.order[1].isFocused
 	game:PressKey('PADDRIGHT')
-	t.eq(addon.topBar.order[2].isSelected, selectedBefore, 'a releasing focus ignores the d-pad')
+	t.eq(addon.topBar.order[2].isFocused, focusedBefore, 'a releasing focus ignores the d-pad')
 	endCombat(game)
 	t.eq(game:PressKey('PADDRIGHT'), false, 'd-pad freed')
 	t.eq(game:PressKey('ESCAPE'), false, 'Escape freed')
@@ -221,7 +352,7 @@ t.test('combat starting ends the focus while the keys can still change', functio
 	game:Fire('PLAYER_REGEN_DISABLED')
 	t.eq(addon.input:HasFocus('topbar'), false)
 	t.eq(game:PressKey('PADDRIGHT'), false)
-	t.eq(addon.topBar.order[1].isSelected, false, 'the bar heard the leave')
+	t.eq(addon.topBar.order[1].isFocused, false, 'the bar heard the leave')
 end)
 
 t.test('a bar hidden in combat frees the focus keys when combat ends', function()

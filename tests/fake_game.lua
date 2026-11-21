@@ -86,6 +86,11 @@ function FakeGame.newWidget(kind, parent, template)
 	function widget:GetAlpha()
 		return self.alpha
 	end
+	-- Like the client, a region's drawn alpha is its own times every parent's.
+	function widget:GetEffectiveAlpha()
+		local parentAlpha = self.parent and self.parent.GetEffectiveAlpha and self.parent:GetEffectiveAlpha() or 1
+		return (self.alpha or 1) * parentAlpha
+	end
 	function widget:IsShown()
 		return self.isShown
 	end

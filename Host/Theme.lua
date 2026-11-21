@@ -7,6 +7,7 @@
 	  theme:Color(name) -> { r, g, b, a }
 	  theme:Hex(name)   -> 'ffrrggbb' for |c escapes
 	  theme:Wrap(name, text) -> text in that colour
+	  theme:Number(name) -> number, e.g. 'focus.ringWidth'; 0 when no theme in the chain has it
 ]]
 local _, ns = ...
 
@@ -55,6 +56,17 @@ end
 --- Text wrapped in a colour escape.
 function ThemeMethods:Wrap(name, text)
 	return '|c' .. self:Hex(name) .. tostring(text) .. '|r'
+end
+
+--- A size or count token; 0 when missing, so a renamed token draws nothing instead of failing.
+--- @param name string token name, e.g. 'focus.ringWidth'
+--- @return number
+function ThemeMethods:Number(name)
+	local value = findToken(self.themes, self.key, name)
+	if type(value) ~= 'number' then
+		value = findToken(self.themes, Theme.DEFAULT_THEME, name)
+	end
+	return type(value) == 'number' and value or 0
 end
 
 -- Helpers ---------------------------------------------------------------------------------
