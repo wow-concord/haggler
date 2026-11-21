@@ -9,6 +9,8 @@ local addAuctionHouseActions, addTrackingApi
 
 -- Widgets ---------------------------------------------------------------------------------
 
+local frameChildrenOf = setmetatable({}, { __mode = 'k' })
+
 --- A region that records what the add-on did to it: points, size, text, texture, colour,
 --- shown state, scripts and children. Only methods the client really has are defined, so a
 --- typo fails the test instead of passing silently.
@@ -27,6 +29,13 @@ function FakeGame.newWidget(kind, parent, template)
 	}
 	-- A real region keeps its C object at [0]; adapters tell a region from a class table by it.
 	widget[0] = newproxy(false)
+	-- Child frames, apart from the regions in children, as GetChildren and GetRegions split them.
+	-- Kept off the widget so a deep compare of a widget never walks a parent cycle.
+	frameChildrenOf[widget] = {}
+	local siblings = frameChildrenOf[parent]
+	if siblings and kind ~= 'Texture' and kind ~= 'FontString' then
+		siblings[#siblings + 1] = widget
+	end
 	function widget:SetPoint(...)
 		self.points[#self.points + 1] = { ... }
 	end
@@ -45,6 +54,16 @@ function FakeGame.newWidget(kind, parent, template)
 	end
 	function widget:GetRight()
 		return self.right
+	end
+	function widget:GetTop()
+		return self.top
+	end
+	function widget:GetBottom()
+		return self.bottom
+	end
+	-- What a test sets in scale, else 1.
+	function widget:GetEffectiveScale()
+		return self.scale or 1
 	end
 	function widget:SetSize(width, height)
 		self.width, self.height = width, height
@@ -156,6 +175,12 @@ function FakeGame.newWidget(kind, parent, template)
 	end
 	function widget:SetClampedToScreen(isClamped)
 		self.isClampedToScreen = isClamped
+	end
+	function widget:GetChildren()
+		return unpack(frameChildrenOf[self])
+	end
+	function widget:GetRegions()
+		return unpack(self.children)
 	end
 	function widget:GetScript(script)
 		return self.scripts[script]
@@ -959,6 +984,7 @@ FakeGame.FEATURE_FILES = {
 	'Features/Tracking.lua',
 	'Features/Sessions.lua',
 	'Features/Crafting/View.lua',
+	'Features/Crafting/Anchor.lua',
 	'Features/Crafting/Crafting.lua',
 	'Features/TopBar/TopBar.lua',
 	'Features/Window/Window.lua',

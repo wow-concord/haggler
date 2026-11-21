@@ -79,6 +79,7 @@ Features\Trade\Trade.lua
 Features\Tracking.lua
 Features\Sessions.lua
 Features\Crafting\View.lua
+Features\Crafting\Anchor.lua
 Features\Crafting\Crafting.lua
 Features\TopBar\Model.lua
 Features\TopBar\Feed.lua

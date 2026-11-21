@@ -398,6 +398,122 @@ t.test('the selected recipe gets a panel; Plan venture starts one and opens the 
 	t.same(addon.errors, {})
 end)
 
+-- Screen edges for a fake frame: the client reports them once the frame is laid out.
+local function placeAt(widget, left, right, top, bottom)
+	widget.left, widget.right, widget.top, widget.bottom = left, right, top, bottom
+	return widget
+end
+
+local function craftingPanel(game, hostFrame)
+	for _, frame in ipairs(game.createdFrames) do
+		if frame.parent == hostFrame and frame.lines then
+			return frame
+		end
+	end
+	return nil
+end
+
+-- A profession frame laid out on a 1600-wide screen, its recipe selected; tabs(frame) adds the side column.
+local function panelBeside(frameLeft, frameRight, tabs)
+	local game, addon, parts = start()
+	placeAt(game.env.UIParent, 0, 1600, 900, 0)
+	placeAt(parts.frame, frameLeft, frameRight, 800, 200)
+	if tabs then
+		tabs(parts.frame)
+	end
+	parts.form:Init({ recipeID = RECIPE_ID })
+	return craftingPanel(game, parts.frame), parts.frame, addon, game
+end
+
+-- A point with its relative frame named, so a mismatch never deep-compares two frames.
+local function pointOf(region, relativeName, relativeFrame)
+	local point, relativeTo, relativePoint, x, y = region:GetPoint(1)
+	return { point, relativeTo == relativeFrame and relativeName or tostring(relativeTo), relativePoint, x, y }
+end
+
+local function sideTab(parent, left, right, top)
+	return placeAt(FakeGame.newWidget('CheckButton', parent), left, right, top, top - 44)
+end
+
+t.test('the panel sits right of the side tab column, measured from the frames', function()
+	local panel, frame, addon = panelBeside(400, 1000, function(hostFrame)
+		sideTab(hostFrame, 997, 1040, 760)
+		sideTab(hostFrame, 997, 1040, 710)
+		-- The gamepad hint under the tabs, a region of a holder that spans the whole frame.
+		local holder = placeAt(FakeGame.newWidget('Frame', hostFrame), 400, 1000, 800, 200)
+		placeAt(holder:CreateTexture(nil, 'ARTWORK'), 1000, 1044, 660, 640)
+	end)
+	t.truthy(panel and panel:IsShown())
+	t.same(
+		pointOf(panel, 'frame', frame),
+		{ 'TOPLEFT', 'frame', 'TOPRIGHT', 52, 0 },
+		'tabs end at 1044, then the 8 gap'
+	)
+	t.eq(#panel.points, 1)
+	t.eq(panel.isClampedToScreen, true)
+	t.same(addon.errors, {})
+end)
+
+t.test('without side tabs the panel sits at the frame edge; hidden tabs and wide panels do not count', function()
+	local panel, frame = panelBeside(400, 1000, function(hostFrame)
+		sideTab(hostFrame, 997, 1040, 760):Hide()
+		placeAt(FakeGame.newWidget('Frame', hostFrame), 1004, 1304, 800, 200)
+		placeAt(FakeGame.newWidget('Frame', hostFrame), 1004, 1040, 1200, 1000)
+	end)
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 8, 0 })
+end)
+
+t.test('with no room on the right the panel flips left of the frame', function()
+	local panel, frame = panelBeside(800, 1400, function(hostFrame)
+		sideTab(hostFrame, 1397, 1440, 760)
+	end)
+	t.same(pointOf(panel, 'frame', frame), { 'TOPRIGHT', 'frame', 'TOPLEFT', -8, 0 })
+end)
+
+t.test('with no room on either side the panel stays right of the tabs, clamped to the screen', function()
+	local panel, frame = panelBeside(100, 1500)
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 8, 0 })
+	t.eq(panel.isClampedToScreen, true)
+end)
+
+t.test('a scaled profession frame measures in screen pixels', function()
+	local panel, frame = panelBeside(400, 1000, function(hostFrame)
+		hostFrame.scale = 0.5
+		sideTab(hostFrame, 997, 1040, 760).scale = 0.5
+	end)
+	-- 40 frame units past the edge, at half scale on a screen at scale 1: offsets stay in frame units.
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 48, 0 })
+end)
+
+t.test('tabs that show or appear after the first paint move the panel', function()
+	local lateTab
+	local panel, frame, addon, game = panelBeside(400, 1000, function(hostFrame)
+		lateTab = sideTab(hostFrame, 997, 1040, 760)
+		lateTab:Hide()
+	end)
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 8, 0 })
+	lateTab:Show()
+	game:RunFrames()
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 48, 0 }, 'a hidden tab shows')
+	sideTab(frame, 997, 1060, 700)
+	frame:Hide()
+	frame:Show()
+	game:RunFrames()
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 68, 0 }, 'the frame shows with a new tab')
+	placeAt(frame, 400, 1020, 800, 200)
+	frame.scripts.OnSizeChanged(frame)
+	game:RunFrames()
+	t.same(pointOf(panel, 'frame', frame), { 'TOPLEFT', 'frame', 'TOPRIGHT', 48, 0 }, 'the frame resizes')
+	t.same(addon.errors, {})
+end)
+
+t.test('the panel keeps to the 8-point grid', function()
+	local panel = panelBeside(400, 1000)
+	t.eq(panel.width % 8, 0, 'width on the grid')
+	t.eq(panel.height % 8, 0, 'height on the grid')
+	t.same(pointOf(panel.plan, 'panel', panel), { 'BOTTOMLEFT', 'panel', 'BOTTOMLEFT', 8, 8 })
+end)
+
 t.group('ledger tab')
 
 t.test('session starts: each mode, and a fallback says so', function()

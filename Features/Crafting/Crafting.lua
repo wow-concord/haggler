@@ -12,6 +12,8 @@
 	Taint: Haggler adds its own font strings and panel to Blizzard's frames and listens through
 	hooksecurefunc and the scroll box's frame-initialized callback; it never replaces a
 	Blizzard function, never sorts or filters the recipe list and never touches a secure frame.
+	Placement: Features/Crafting/Anchor.lua puts the panel right of Forever's side tab column,
+	measured each time the selected recipe repaints.
 	Frame cost: a row costs a cache lookup (Features/Crafting/View.lua); the cache drops on
 	prices, scans, rules, the bags and the books, and the visible rows repaint once a frame.
 ]]
@@ -19,9 +21,14 @@ local _, ns = ...
 
 local MODULE_KEY = 'crafting'
 local EVENT_OWNER = 'crafting'
-local PANEL_WIDTH = 260
+-- 8-point grid (Concord DS): whole pixels, heights in 4s, the hairline drawn inside the box.
+local PANEL_WIDTH = 264
 local PANEL_LINES = 9
 local LINE_SIZE = 12
+local PANEL_PADDING = 8
+local GRID = 8
+-- Nine 18-high lines (Widgets:Lines) round up to the grid.
+local PANEL_BODY_HEIGHT = math.ceil(PANEL_LINES * (LINE_SIZE + 6) / GRID) * GRID
 local ROW_TEXT_INSET = -6
 local LEVEL_TOKENS = { low = 'color.state.danger', medium = 'color.state.warning' }
 local INVALIDATING_MESSAGES =
@@ -29,6 +36,7 @@ local INVALIDATING_MESSAGES =
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local attach, paintRow, paintRecipeRow, paintDetail, ensurePanel, invalidate, repaint, planVenture, marketNow, setColor
+local placePanel, queuePlacement, watchColumn
 
 local state = {
 	isOn = false,
@@ -36,6 +44,8 @@ local state = {
 	-- Blizzard recycles row frames: weak keys let a dropped frame go.
 	rowTexts = setmetatable({}, { __mode = 'k' }),
 	rowRecipes = setmetatable({}, { __mode = 'k' }),
+	-- Tab column frames already hooked (a script hook cannot be removed, so once each).
+	watchedColumnFrames = setmetatable({}, { __mode = 'k' }),
 }
 
 ns.host.AddModule({
@@ -114,6 +124,9 @@ function attach()
 	end
 	state.isHooked = true
 	state.frame = frame
+	-- The tab column lays out with the frame and changes with the profession: place again then.
+	ns.wow:HookFrameScript(frame, 'OnShow', queuePlacement)
+	ns.wow:HookFrameScript(frame, 'OnSizeChanged', queuePlacement)
 	ns.wow:HookMethod(page.SchematicForm, 'Init', function(_, recipeInfo)
 		state.recipeId = type(recipeInfo) == 'table' and recipeInfo.recipeID or nil
 		paintDetail()
@@ -177,6 +190,7 @@ function paintDetail()
 	end
 	panel.lines:SetLines(lines)
 	panel.plan:SetShown(canPlan)
+	placePanel()
 	panel:SetShown(#lines > 0 or canPlan)
 end
 
@@ -186,17 +200,18 @@ function ensurePanel()
 	end
 	local ui = ns.Widgets.new(ns.wow, ns.theme)
 	local panel = ns.wow:CreateFrame('Frame', state.frame)
-	panel:SetSize(PANEL_WIDTH, PANEL_LINES * (LINE_SIZE + 6) + 48)
-	panel:SetPoint('TOPLEFT', state.frame, 'TOPRIGHT', 4, 0)
+	local buttonHeight = ns.Widgets.BUTTON_HEIGHT
+	panel:SetSize(PANEL_WIDTH, PANEL_PADDING * 3 + PANEL_BODY_HEIGHT + buttonHeight)
+	-- The DS window surface and its hairline (--window-bg, --window-border), not a tooltip.
 	ui:Fill(panel, 'color.surface.base')
 	ui:Border(panel, 'color.border.subtle')
 	local body = ns.wow:CreateFrame('Frame', panel)
-	body:SetPoint('TOPLEFT', panel, 'TOPLEFT', 10, -10)
-	body:SetPoint('RIGHT', panel, 'RIGHT', -10, 0)
-	body:SetHeight(PANEL_LINES * (LINE_SIZE + 6))
+	body:SetPoint('TOPLEFT', panel, 'TOPLEFT', PANEL_PADDING, -PANEL_PADDING)
+	body:SetPoint('RIGHT', panel, 'RIGHT', -PANEL_PADDING, 0)
+	body:SetHeight(PANEL_BODY_HEIGHT)
 	panel.lines = ui:Lines(body, PANEL_LINES, LINE_SIZE)
 	panel.plan = ui:Button(panel, 'Plan venture', 'secondary')
-	panel.plan:SetPoint('BOTTOMLEFT', panel, 'BOTTOMLEFT', 10, 10)
+	panel.plan:SetPoint('BOTTOMLEFT', panel, 'BOTTOMLEFT', PANEL_PADDING, PANEL_PADDING)
 	panel.plan:OnClick(planVenture)
 	state.panel = panel
 	return panel
@@ -246,6 +261,37 @@ function repaint()
 		paintRecipeRow(row, state.rowRecipes[row])
 	end
 	paintDetail()
+end
+
+function placePanel()
+	if not state.panel or not state.frame then
+		return
+	end
+	ns.CraftingAnchor.place(state.panel, state.frame, ns.wow.env.UIParent, PANEL_WIDTH)
+	watchColumn()
+end
+
+-- Next frame: a frame that just showed or resized has not laid out its children yet.
+function queuePlacement()
+	if state.isPlacementQueued or not state.isOn then
+		return
+	end
+	state.isPlacementQueued = true
+	ns.wow:After(0, function()
+		state.isPlacementQueued = false
+		placePanel()
+	end)
+end
+
+function watchColumn()
+	for _, columnFrame in ipairs(ns.CraftingAnchor.columnFrames(state.frame, state.panel)) do
+		if not state.watchedColumnFrames[columnFrame] then
+			state.watchedColumnFrames[columnFrame] = true
+			ns.wow:HookFrameScript(columnFrame, 'OnShow', queuePlacement)
+			ns.wow:HookFrameScript(columnFrame, 'OnHide', queuePlacement)
+			ns.wow:HookFrameScript(columnFrame, 'OnSizeChanged', queuePlacement)
+		end
+	end
 end
 
 function marketNow()
