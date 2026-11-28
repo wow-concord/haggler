@@ -1,5 +1,5 @@
 --[[
-	Ventures tab: crafting ventures from plan to the last copper in the mail (Engine/Ventures.lua,
+	Ventures tab (V2, left out of the release package): crafting ventures from plan to the last copper in the mail (Engine/Ventures.lua,
 	booked by Features/Tracking.lua). Pick a venture (open ones first, closed ones kept for good)
 	and see its lines, materials, profit both ways (cash, and over what the materials were
 	worth) with the known share, and the forecast at today's values. Plan more or fewer crafts

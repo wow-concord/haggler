@@ -1,8 +1,8 @@
 --[[
 	Crafting: cost, value, margin and confidence on Blizzard's profession frame; no window of
 	Haggler's own. Each recipe row in the list gets its profit and margin; the selected recipe
-	gets a side panel with the figures, the known versus estimated share, the confidence and a
-	"Plan venture" button. Each part has its own setting; low confidence and its reasons show
+	gets a side panel with the figures, the known versus estimated share, the confidence and,
+	with the V2 venture planner loaded, a "Plan venture" button. Each part has its own setting; low confidence and its reasons show
 	whatever is switched off.
 
 	The valuation setting picks how reagents the player holds are costed: what they would fetch
@@ -60,7 +60,6 @@ ns.host.AddModule({
 			default = true,
 		},
 		{ key = 'showShare', type = 'toggle', label = 'Known and estimated share of the cost', default = true },
-		{ key = 'showPlan', type = 'toggle', label = 'Plan venture button', default = true },
 		{
 			key = 'valuation',
 			type = 'choice',
@@ -71,6 +70,9 @@ ns.host.AddModule({
 				{ value = 'paid', label = 'What you paid (unknown origin: what they would sell for)' },
 			},
 		},
+		-- V2: only with the venture planner loaded (a saved value is kept without it).
+		ns.Ventures.hasPlanner and { key = 'showPlan', type = 'toggle', label = 'Plan venture button', default = true }
+			or nil,
 	},
 	onEnable = function(module)
 		state.isOn = true
@@ -183,13 +185,15 @@ function paintDetail()
 		share = module:Setting('showShare'),
 		credit = ns.window and ns.window:Credit() or ns.PriceData.DEFAULT_CREDIT,
 	})
-	local canPlan = craft ~= nil and module:Setting('showPlan') and ns.books ~= nil
+	local canPlan = ns.Ventures.hasPlanner and craft ~= nil and module:Setting('showPlan') and ns.books ~= nil
 	local panel = (#lines > 0 or canPlan) and ensurePanel() or state.panel
 	if not panel then
 		return
 	end
 	panel.lines:SetLines(lines)
-	panel.plan:SetShown(canPlan)
+	if panel.plan then
+		panel.plan:SetShown(canPlan)
+	end
 	placePanel()
 	panel:SetShown(#lines > 0 or canPlan)
 end
@@ -210,9 +214,11 @@ function ensurePanel()
 	body:SetPoint('RIGHT', panel, 'RIGHT', -PANEL_PADDING, 0)
 	body:SetHeight(PANEL_BODY_HEIGHT)
 	panel.lines = ui:Lines(body, PANEL_LINES, LINE_SIZE)
-	panel.plan = ui:Button(panel, 'Plan venture', 'secondary')
-	panel.plan:SetPoint('BOTTOMLEFT', panel, 'BOTTOMLEFT', PANEL_PADDING, PANEL_PADDING)
-	panel.plan:OnClick(planVenture)
+	if ns.Ventures.hasPlanner then
+		panel.plan = ui:Button(panel, 'Plan venture', 'secondary')
+		panel.plan:SetPoint('BOTTOMLEFT', panel, 'BOTTOMLEFT', PANEL_PADDING, PANEL_PADDING)
+		panel.plan:OnClick(planVenture)
+	end
 	state.panel = panel
 	return panel
 end

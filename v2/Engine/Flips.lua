@@ -1,14 +1,14 @@
 --[[
-	Flips: listings in the last scan worth buying to sell again, from the spec's Flips tab:
-	under what a vendor pays (a vendor flip) or under a rule's value (a relist flip). Pure: game
-	reads come in through deps.
+	Flips (V2, left out of the release package): listings in the last scan worth buying to sell
+	again, from the spec's Flips tab: under what a vendor pays (a vendor flip) or under a rule's
+	value (a relist flip). Pure: game reads come in through deps.
 
 	  Flips.find(snapshot, deps, options?) -> FlipRow[], isCapped
 	      the best flip per item, highest expected profit first, at most deps.limit; isCapped
 	      when more items could be relist flips than were priced
 	  Flips.vendorFlip(item, vendor, now?) -> FlipRow|nil
 	  Flips.relistFlip(item, price, facts) -> FlipRow|nil
-	  Flips.scanConfidence(ageSeconds) -> Confidence   how far the listings may have moved
+	  Flips.scanConfidence(ageSeconds) -> Confidence   ScanStore.scanConfidence (V1)
 
 	A vendor flip buys every unit listed under the vendor price; its profit is certain once
 	bought, so its confidence is only the scan's age. A relist flip buys the units that still
@@ -56,9 +56,10 @@ ns.Flips = Flips
 Flips.LIMIT = 100
 Flips.MAX_PRICED = 500
 Flips.MIN_PROFIT = 1
--- A scan older than this may already miss the listings it shows (medium, then low).
-Flips.STALE_MEDIUM_SECONDS = 15 * 60
-Flips.STALE_LOW_SECONDS = 2 * 3600
+-- The scan's age confidence lives in ScanStore (V1: Advice reads it too).
+Flips.STALE_MEDIUM_SECONDS = ns.ScanStore.STALE_MEDIUM_SECONDS
+Flips.STALE_LOW_SECONDS = ns.ScanStore.STALE_LOW_SECONDS
+Flips.scanConfidence = ns.ScanStore.scanConfidence
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local levelsOf, withoutOwn, isWanted, compareRows, compareLiquidity, safeCall, isFinitePositive, percentOf, mergeConfidence
@@ -242,43 +243,6 @@ function Flips.relistFlip(item, price, facts)
 		}),
 		usesPriceSource = price.usesPriceSource == true,
 	}
-end
-
---- How far the scan's listings may have moved since it was taken.
---- @param ageSeconds number|nil
---- @return table Confidence
-function Flips.scanConfidence(ageSeconds)
-	if type(ageSeconds) ~= 'number' then
-		return {
-			level = 'medium',
-			reasons = { { code = 'scanAgeUnknown', level = 'medium', text = 'scan age unknown; listings may be gone' } },
-		}
-	end
-	local minutes = math.floor(ageSeconds / 60)
-	if ageSeconds >= Flips.STALE_LOW_SECONDS then
-		return {
-			level = 'low',
-			reasons = {
-				{
-					code = 'staleScan',
-					level = 'low',
-					text = string.format('scan is %d min old; listings may be gone', minutes),
-				},
-			},
-		}
-	elseif ageSeconds >= Flips.STALE_MEDIUM_SECONDS then
-		return {
-			level = 'medium',
-			reasons = {
-				{
-					code = 'staleScan',
-					level = 'medium',
-					text = string.format('scan is %d min old; listings may be gone', minutes),
-				},
-			},
-		}
-	end
-	return { level = 'high', reasons = {} }
 end
 
 -- Helpers ---------------------------------------------------------------------------------

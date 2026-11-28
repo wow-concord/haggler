@@ -135,7 +135,7 @@ t.test('detail parts switch off, but low confidence and its reasons always show'
 	t.eq(#credited, 2)
 end)
 
-t.test('the ventures tab shows a low forecast confidence and its reasons', function()
+t.v2test('the ventures tab shows a low forecast confidence and its reasons', function()
 	local venture = {
 		name = 'V',
 		status = 'planning',
@@ -379,6 +379,11 @@ t.test('the selected recipe gets a panel; Plan venture starts one and opens the 
 	t.truthy(linesText(panel.lines):find('Crafted: Bolt of Linen Cloth × 2', 1, true), 'a bolt is cheaper to craft')
 	parts.form:Init({ recipeID = RECIPE_ID })
 	t.truthy(linesText(panel.lines):find(addon.window:Credit(), 1, true), 'the panel credits AHledger')
+	if t.isV1Only then
+		t.eq(panel.plan, nil, 'no Plan venture button without the V2 planner')
+		t.same(addon.errors, {})
+		return
+	end
 	panel.plan:Click()
 	local market = addon.store:Market(MARKET)
 	local venture = addon.Ventures.get(market, 1)
@@ -511,6 +516,10 @@ t.test('the panel keeps to the 8-point grid', function()
 	local panel = panelBeside(400, 1000)
 	t.eq(panel.width % 8, 0, 'width on the grid')
 	t.eq(panel.height % 8, 0, 'height on the grid')
+	if t.isV1Only then
+		t.eq(panel.plan, nil, 'no Plan venture button without the planner')
+		return
+	end
 	t.same(pointOf(panel.plan, 'panel', panel), { 'BOTTOMLEFT', 'panel', 'BOTTOMLEFT', 8, 8 })
 end)
 

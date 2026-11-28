@@ -53,6 +53,9 @@ ScanStore.SHORT_BAND = 1
 ScanStore.DEFAULT_KEEP_MARKET_DAYS = 30
 -- Unpacked items kept for the session; the cache is emptied when it reaches this.
 ScanStore.CACHE_LIMIT = 512
+-- A scan older than this may already miss the listings it shows (medium, then low).
+ScanStore.STALE_MEDIUM_SECONDS = 15 * 60
+ScanStore.STALE_LOW_SECONDS = 2 * 3600
 
 local COPPER_FLAG = 1
 local CAPPED_FLAG = 2
@@ -269,6 +272,43 @@ end
 --- Unpacked items held in the session cache.
 function ScanStore.cachedCount()
 	return unpackedCount
+end
+
+--- How far the scan's listings may have moved since it was taken.
+--- @param ageSeconds number|nil
+--- @return table Confidence
+function ScanStore.scanConfidence(ageSeconds)
+	if type(ageSeconds) ~= 'number' then
+		return {
+			level = 'medium',
+			reasons = { { code = 'scanAgeUnknown', level = 'medium', text = 'scan age unknown; listings may be gone' } },
+		}
+	end
+	local minutes = math.floor(ageSeconds / 60)
+	if ageSeconds >= ScanStore.STALE_LOW_SECONDS then
+		return {
+			level = 'low',
+			reasons = {
+				{
+					code = 'staleScan',
+					level = 'low',
+					text = string.format('scan is %d min old; listings may be gone', minutes),
+				},
+			},
+		}
+	elseif ageSeconds >= ScanStore.STALE_MEDIUM_SECONDS then
+		return {
+			level = 'medium',
+			reasons = {
+				{
+					code = 'staleScan',
+					level = 'medium',
+					text = string.format('scan is %d min old; listings may be gone', minutes),
+				},
+			},
+		}
+	end
+	return { level = 'high', reasons = {} }
 end
 
 -- Helpers ---------------------------------------------------------------------------------

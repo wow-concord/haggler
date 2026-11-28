@@ -1280,9 +1280,9 @@ FakeGame.FEATURE_FILES = {
 	'Features/Window/SellTab.lua',
 	'Features/Window/AuctionsTab.lua',
 	'Features/Window/BuyTab.lua',
-	'Features/Window/FlipsTab.lua',
+	'v2/Features/Window/FlipsTab.lua',
 	'Features/Window/LedgerTab.lua',
-	'Features/Window/VenturesTab.lua',
+	'v2/Features/Window/VenturesTab.lua',
 	'Features/Compat.lua',
 	'Features/Options.lua',
 }
@@ -1403,7 +1403,7 @@ function FakeGame.startAddon(t, game, beforeStart)
 			errors[#errors + 1] = 'tooltip ' .. owner .. ': ' .. tostring(err)
 		end,
 	})
-	for _, path in ipairs(FakeGame.FEATURE_FILES) do
+	for _, path in ipairs(t.addonPaths(FakeGame.FEATURE_FILES)) do
 		assert(loadfile(path))('Haggler', ns)
 	end
 	-- game.savedDb / game.savedCharDb / game.savedArchiveDb carry saved variables across a simulated /reload.

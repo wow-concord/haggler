@@ -239,7 +239,9 @@ window.module = ns.host.AddModule({
 				{ value = 'sell', label = 'Sell' },
 				{ value = 'buy', label = 'Buy' },
 				{ value = 'ledger', label = 'Ledger' },
-				{ value = 'ventures', label = 'Ventures' },
+				-- V2: only with the venture planner loaded. A saved 'ventures' stays saved without it
+				-- (Settings reads it as the default and never drops it).
+				ns.Ventures.hasPlanner and { value = 'ventures', label = 'Ventures' } or nil,
 			},
 		},
 	},
@@ -284,7 +286,7 @@ window.module = ns.host.AddModule({
 			end)
 		end
 		module:AddCommand('open', {
-			usage = 'open [scan|lookup|rules|sell|buy|ledger|ventures]',
+			usage = 'open [scan|lookup|rules|sell|buy|ledger]',
 			help = 'Open the Haggler window (plain /hag opens and closes it)',
 			run = function(args)
 				return runOpenCommand(window, args)

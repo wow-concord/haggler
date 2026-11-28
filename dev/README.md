@@ -24,7 +24,7 @@ With Concord_Check v1 (`ConcordCheck.VERSION == 1`), the items also register thr
 Read the run after a `/reload` or logout. The reader exits 0 only when every item passed or was marked N/A:
 
 ```bash
-node dev/read-check-results.ts --version 0.2.0
+node dev/read-check-results.ts --version 0.1.0
 ```
 
 `--version` is optional; with it the reader is green only when the current run is of that Haggler version. With several WoW accounts, also pass the account folder name or the full path to `Haggler_Check.lua`.

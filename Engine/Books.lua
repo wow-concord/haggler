@@ -11,7 +11,12 @@
 	  buying        OnPurchase (the purchase call: which venture it was for)
 	  merchant      OnVendorBuy (pool in) · OnVendorSell · OnDestroy (pool out)
 	  crafting      OnCraft (reagents out of the pool, their cash share to the venture)
-	  ventures      CreateVenture · PlanCrafts · CloseVenture · CheckVentures
+	  ventures      CreateVenture · PlanCrafts · CloseVenture · CheckVentures (V2)
+
+	Ventures are V2: without the planner (v2/Engine/Ventures.lua, left out of the release
+	package) nothing is booked to a venture and CheckVentures does nothing. Ledger rows and
+	tracked auctions keep any ventureId they already carry, and saved ventures are kept as
+	they are. CreateVenture, PlanCrafts and CloseVenture need the planner and throw without it.
 
 	Units leave the cost pool when they leave the bags (posted, crafted, vendored, destroyed) and
 	an auction keeps the known share it took; units back from an expired or cancelled auction
@@ -50,7 +55,8 @@ local BooksMethods = {}
 BooksMethods.__index = BooksMethods
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local isWholePositive, isWhole, heldOf, send, append, shareBack, ventureOf, touchVenture, dropStaleBuys
+local isWholePositive, isWhole, heldOf, send, append, shareBack, ventureOf, openVentureFor, touchVenture
+local requirePlanner, dropStaleBuys
 
 --- @param options table see the file header
 --- @return table books
@@ -76,7 +82,7 @@ function BooksMethods:OnPost(post)
 	if not (isWholePositive(post.itemId) and isWholePositive(post.qty)) then
 		return
 	end
-	local venture = ns.Ventures.openFor(market, 'post', post.itemId)
+	local venture = openVentureFor(market, 'post', post.itemId)
 	local entry = {
 		itemId = post.itemId,
 		qty = post.qty,
@@ -253,7 +259,7 @@ function BooksMethods:OnPurchase(buy)
 	end
 	local now = self.options.now()
 	dropStaleBuys(self, now)
-	local venture = ns.Ventures.openFor(market, 'buy', buy.itemId)
+	local venture = openVentureFor(market, 'buy', buy.itemId)
 	self.pendingBuys[#self.pendingBuys + 1] = {
 		itemId = buy.itemId,
 		qty = buy.qty,
@@ -289,7 +295,7 @@ function BooksMethods:OnWonMail(won)
 	end
 	dropStaleBuys(self, now)
 	local ventureId = ns.MailMatcher.takeBuy(self.pendingBuys, won.itemId, won.qty)
-	local venture = ventureOf(market, ventureId) or ns.Ventures.openFor(market, 'buy', won.itemId)
+	local venture = ventureOf(market, ventureId) or openVentureFor(market, 'buy', won.itemId)
 	self:BookBuy(market, 'buy', won.itemId, won.qty, won.bid, venture, now, char)
 end
 
@@ -303,7 +309,7 @@ function BooksMethods:OnVendorBuy(buy)
 	if not (isWholePositive(buy.itemId) and isWholePositive(buy.qty) and isWhole(buy.copper)) then
 		return
 	end
-	local venture = ns.Ventures.openFor(market, 'buy', buy.itemId)
+	local venture = openVentureFor(market, 'buy', buy.itemId)
 	self:BookBuy(market, 'vendorBuy', buy.itemId, buy.qty, buy.copper, venture, now, char)
 end
 
@@ -359,7 +365,7 @@ function BooksMethods:OnCraft(craft)
 	if not market or not char or type(craft) ~= 'table' or not isWholePositive(craft.recipeId) then
 		return nil
 	end
-	local venture = ns.Ventures.openFor(market, 'craft', craft.recipeId)
+	local venture = openVentureFor(market, 'craft', craft.recipeId)
 	local costs, total = {}, 0
 	for _, reagent in ipairs(type(craft.reagents) == 'table' and craft.reagents or {}) do
 		if isWholePositive(reagent.itemId) and isWholePositive(reagent.qty) then
@@ -387,6 +393,7 @@ end
 
 --- Starts a venture.
 function BooksMethods:CreateVenture(spec)
+	requirePlanner('CreateVenture')
 	local market = self.options.market()
 	if not market then
 		return nil, 'no market'
@@ -400,12 +407,13 @@ end
 --- @return table|nil Venture
 --- @return string|nil reason
 function BooksMethods:PlanCrafts(ventureId, recipe, crafts, spec)
+	requirePlanner('PlanCrafts')
 	local market = self.options.market()
 	if not market then
 		return nil, 'no market'
 	end
 	local venture = ventureOf(market, ventureId)
-		or (type(recipe) == 'table' and ns.Ventures.openFor(market, 'craft', recipe.recipeId))
+		or (type(recipe) == 'table' and openVentureFor(market, 'craft', recipe.recipeId))
 		or ns.Ventures.create(market, spec, self.options.now())
 	local line, reason = ns.Ventures.addCrafts(venture, recipe, crafts)
 	if not line then
@@ -421,6 +429,7 @@ end
 --- @return table|nil leftovers
 --- @return string|nil reason
 function BooksMethods:CloseVenture(ventureId, action)
+	requirePlanner('CloseVenture')
 	local market = self.options.market()
 	local venture = market and ventureOf(market, ventureId)
 	if not venture or not self.options.char() then
@@ -430,8 +439,11 @@ function BooksMethods:CloseVenture(ventureId, action)
 end
 
 --- Closes every open venture that has sold out; unused materials go to stock.
---- @return number count closed
+--- @return number count closed (0 without the V2 planner)
 function BooksMethods:CheckVentures()
+	if not ns.Ventures.hasPlanner then
+		return 0
+	end
 	local market = self.options.market()
 	local closed = 0
 	for _, venture in ipairs(market and ns.Ventures.list(market, { isOpen = true }) or {}) do
@@ -521,8 +533,19 @@ function shareBack(record, qty)
 	return units, copper
 end
 
+-- Without the planner no venture is booked to, so a saved one is left as it is.
 function ventureOf(market, ventureId)
-	return ventureId and ns.Ventures.get(market, ventureId) or nil
+	return ns.Ventures.hasPlanner and ventureId and ns.Ventures.get(market, ventureId) or nil
+end
+
+function openVentureFor(market, role, key)
+	return ns.Ventures.hasPlanner and ns.Ventures.openFor(market, role, key) or nil
+end
+
+function requirePlanner(method)
+	if not ns.Ventures.hasPlanner then
+		error('Books:' .. method .. ': ventures are V2 and their planner is not loaded', 3)
+	end
 end
 
 function touchVenture(books, venture)

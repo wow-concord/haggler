@@ -111,7 +111,7 @@ export function parseArguments(argv: readonly string[]): Result<ReaderArguments>
 		if (argument === '--version') {
 			expectedVersion = argv[index + 1];
 			if (expectedVersion === undefined || expectedVersion === '') {
-				return { ok: false, error: new Error('--version needs a version, e.g. --version 0.2.0') };
+				return { ok: false, error: new Error('--version needs a version, e.g. --version 0.1.0') };
 			}
 			index += 1;
 		} else if (argument !== undefined && location === undefined) {

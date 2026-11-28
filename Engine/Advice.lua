@@ -259,7 +259,7 @@ end
 
 -- The scan's age, and the rule price's confidence when the rule price set the target.
 function confidenceOf(scanAgeSeconds, ruleConfidence)
-	local parts = { ns.Flips.scanConfidence(scanAgeSeconds) }
+	local parts = { ns.ScanStore.scanConfidence(scanAgeSeconds) }
 	if type(ruleConfidence) == 'table' then
 		parts[#parts + 1] = ruleConfidence
 	end

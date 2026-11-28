@@ -295,7 +295,7 @@ t.test('step 3: ventures drop their estimates; known units are restored where ce
 	t.eq(market.ventures[6].materials[19].knownUnits, 3, 'no estimate, every unit bought: all known')
 end)
 
-t.test('step 3: estimates are read live; a lost split reads as incomplete', function()
+t.v2test('step 3: estimates are read live; a lost split reads as incomplete', function()
 	local market = migrated()
 	local function valueOf(_, qty)
 		return 7 * qty
@@ -386,7 +386,7 @@ local function assertNothingDerived(db)
 	t.eq(hasKey(db, 'leftoverCopper'), false, 'leftoverCopper stored')
 end
 
-t.test('nothing Books, Ventures or the ledger store is derived from a price source', function()
+t.v2test('nothing Books, Ventures or the ledger store is derived from a price source', function()
 	local db = { version = Store.SCHEMA_VERSION, markets = {} }
 	local store = assert(Store.open(db, {}, { now = NOW }))
 	local market = store:Market(MARKET_ID)

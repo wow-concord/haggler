@@ -4,6 +4,9 @@
 package-as: Haggler
 enable-nolib-creation: no
 ignore:
+  # V2 (Flips, Ventures): kept in the repo, never shipped. Haggler.toc's do-not-package
+  # blocks drop their lines from the release TOC.
+  - v2
   - dev
   - tests
   - tools
