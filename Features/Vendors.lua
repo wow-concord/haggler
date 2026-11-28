@@ -27,7 +27,7 @@ ns.host.AddModule({
 		{
 			key = 'record',
 			type = 'toggle',
-			label = 'Remember what merchants charge, on this computer (nothing is sent)',
+			label = 'Remember what merchants charge on this computer. Nothing is sent.',
 			default = true,
 		},
 		{

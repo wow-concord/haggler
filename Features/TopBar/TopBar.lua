@@ -66,7 +66,7 @@ ns.host.AddModule({
 		{ key = 'showRule', type = 'toggle', label = 'Rule switcher', default = true },
 		{ key = 'showScan', type = 'toggle', label = 'Scan status', default = true },
 		{ key = 'showShortcuts', type = 'toggle', label = 'Shortcuts', default = true },
-		{ key = 'feed', type = 'toggle', label = 'Broker feed (LibDataBroker)', default = true },
+		{ key = 'feed', type = 'toggle', label = 'LibDataBroker feed', default = true },
 		{ key = 'focusKey', type = 'binding', label = 'Focus the top bar', default = '' },
 	},
 	onEnable = function(module)

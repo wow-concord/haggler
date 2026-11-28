@@ -4,6 +4,7 @@
 	base prices). Not the sell price: Wow:ItemInfo's vendorPrice is what a vendor pays.
 
 	  prices:BuyPrice(itemId) -> BuyPrice | nil
+	  prices:FullPrice(itemId) -> { stackPrice, stack } | nil   the seed's base price alone
 
 	  BuyPrice = { price, stackPrice, stack, source = 'seen'|'seed', vendorCount,
 	               cheapestVendor?, ageSeconds?, isLimited, isBasePrice, isVendorConfirmed? }
@@ -106,6 +107,20 @@ function Methods:BuyPrice(itemId)
 		isBasePrice = true,
 		isVendorConfirmed = isVendorConfirmed,
 	}
+end
+
+--- The seed's base price for an item, whatever the player has seen, or nil without a seed entry.
+--- @param itemId number
+--- @return table|nil { stackPrice, stack }
+function Methods:FullPrice(itemId)
+	if not isWholePositive(itemId) then
+		error('VendorPrices:FullPrice: itemId must be a whole number', 2)
+	end
+	local stackPrice, stack = seedEntry(self.deps.seed, itemId)
+	if not stackPrice then
+		return nil
+	end
+	return { stackPrice = stackPrice, stack = stack }
 end
 
 -- Helpers ---------------------------------------------------------------------------------

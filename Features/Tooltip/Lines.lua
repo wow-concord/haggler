@@ -3,9 +3,11 @@
 	no game calls, so every line is tested in luajit.
 
 	  build(input) -> Line[]
-	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy? }
-	  advice    = Advice.forItem's BagAdvice for a bag slot
-	  vendorBuy = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
+	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy?,
+	            vendorFullPrice?, isShiftDown? }
+	  advice          = Advice.forItem's BagAdvice for a bag slot
+	  vendorBuy       = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
+	  vendorFullPrice = VendorPrices:FullPrice, the seed's base price { stackPrice, stack }
 	  options = { detailTrace, detailSales, detailListings, detailVendor, detailSellTime,
 	              sellTimeNote }
 
@@ -17,9 +19,13 @@
 	A listing from the player's own scan shows the search icon and the age of the scan that
 	holds the item; one from AHledger (no scan minimum for the item) shows the plug icon and
 	the age of AHledger's row. Above it, when a vendor sells the item, "Vendor (each)" under the
-	store icon with the vendor's price and no age, or "Vendor × N" with the stack price for items
-	a vendor sells only in stacks whose unit is under a whole copper. With a vendor price and no
-	listing the header carries no age.
+	store icon with the vendor's price and no age, or "Vendor × N" with the stack price whenever
+	the unit price is not a whole copper (items a vendor sells in stacks, like arrows). A price
+	below the vendor's base (BuyPrice.isBasePrice false) carries the discount icon after it, or
+	"Discounted" without the atlas. Holding Shift adds small rows under it: who sold it, the
+	standing it was read at as a word, the seed's full price, how long ago it was read, and
+	"Limited stock"; each only when known. With a vendor price and no listing the header carries
+	no age.
 
 	Sell: a header (the module icon) with the age of the default price's base, after its source's
 	icon: the search icon for Haggler's scans, the plug icon for AHledger. When a step read
@@ -64,6 +70,15 @@ TooltipLines.BUY_ICON = 'shopping-cart'
 TooltipLines.BUY_FALLBACK = 'Buy'
 TooltipLines.VENDOR_ICON = 'store'
 TooltipLines.VENDOR_LABEL = 'Vendor'
+TooltipLines.DISCOUNT_ICON = 'badge-percent'
+TooltipLines.DISCOUNT_FALLBACK = 'Discounted'
+TooltipLines.VENDOR_NAME_LABEL = 'Sold by'
+TooltipLines.VENDOR_STANDING_LABEL = 'Standing'
+TooltipLines.VENDOR_FULL_PRICE_LABEL = 'Full price'
+TooltipLines.VENDOR_READ_LABEL = 'Read'
+TooltipLines.VENDOR_LIMITED = 'Limited stock'
+-- The client's standing levels, 1 to 8, as the reputation pane names them.
+local STANDING_WORDS = { 'Hated', 'Hostile', 'Unfriendly', 'Neutral', 'Friendly', 'Honored', 'Revered', 'Exalted' }
 TooltipLines.SCAN_AGE_ICON = 'search'
 TooltipLines.TABLE_AGE_ICON = 'plug'
 TooltipLines.AUCTION_HOUSE_LABEL = 'Auction house'
@@ -92,7 +107,7 @@ local SOURCE_AGE_ICONS = { scan = TooltipLines.SCAN_AGE_ICON, ahledger = Tooltip
 -- What an age's icon says on a client without the icon atlas, as the Buy header falls back.
 local SOURCE_AGE_WORDS = { scan = 'Scan', ahledger = 'AHledger' }
 -- The base named before an AHledger row age, for bases with no age icon of their own.
-local BASE_SOURCE_LABELS = { vendor = 'Vendor', craft = 'Craft cost', realized = 'Your sales' }
+local BASE_SOURCE_LABELS = { vendor = 'Vendor pays', craft = 'Craft cost', realized = 'Your sales' }
 -- The detail line of a shown rule that fails validation.
 TooltipLines.UNUSABLE_RULE_NAMED = "%s can't be used"
 local SECONDS_PER_HOUR = 3600
@@ -121,7 +136,7 @@ local appendSection, buySection, sellSection, detailSection, buyHeaderLine, sell
 local sellPriceRows, priceRow, ageText, traceLines, reasonLines, salesLines, listingsLines, vendorLine
 local sellTimeLines, hasAnyData, defaultEntry, color, unitsAtOrUnder, formatSellTime, levelIcon, topLowReason
 local lowReasonLine, capitalized, iconSetFor, signalLine, waitReasonRows, reasonRow, stackSuffix, detailRow
-local sellAgesText, vendorRow, isPositiveFinite
+local sellAgesText, vendorRow, isPositiveFinite, vendorPriceText, vendorDetailRows
 -- One icon set per theme, built on first use instead of on every hover.
 local iconSetsByTheme = setmetatable({}, { __mode = 'k' })
 
@@ -139,6 +154,8 @@ function TooltipLines.build(input)
 		icons = input.icons or iconSetFor(input.theme),
 		isDetail = input.isDetail,
 		vendorBuy = type(input.vendorBuy) == 'table' and input.vendorBuy or nil,
+		vendorFullPrice = type(input.vendorFullPrice) == 'table' and input.vendorFullPrice or nil,
+		isShiftDown = input.isShiftDown == true,
 	}
 	local advice = type(input.advice) == 'table' and input.advice or nil
 	local lines = {}
@@ -226,6 +243,9 @@ function buySection(quote, view)
 		local row = buildRow(quote, view)
 		if row then
 			rows[#rows + 1] = row
+			if buildRow == vendorRow and view.isShiftDown then
+				vendorDetailRows(rows, view.vendorBuy, view.vendorFullPrice, view)
+			end
 		end
 	end
 	if #rows == 0 then
@@ -336,25 +356,61 @@ function ageText(source, seconds, view)
 	return text and (icon .. ' ' .. text) or icon
 end
 
--- What a vendor charges a unit; a vendor stack whose unit is under a whole copper reads at the
--- stack price, since coins cannot show a fraction.
+-- What a vendor charges a unit, with the discount mark when it is below the vendor's base.
 function vendorRow(_, view)
 	local buy = view.vendorBuy
 	if not buy or not isPositiveFinite(buy.price) then
 		return nil
 	end
-	local label, copper = TooltipLines.VENDOR_LABEL .. TooltipLines.EACH_SUFFIX, buy.price
-	local stack = buy.stack
-	if buy.price % 1 ~= 0 and isPositiveFinite(buy.stackPrice) and isPositiveFinite(stack) and stack > 1 then
-		label, copper = TooltipLines.VENDOR_LABEL .. TooltipLines.QUANTITY_MARK .. stack, buy.stackPrice
-	end
+	local label, copper = vendorPriceText(TooltipLines.VENDOR_LABEL, buy.price, buy.stackPrice, buy.stack)
 	local icon = view.icons:Inline(TooltipLines.VENDOR_ICON, LINE_HEIGHT_ICON, 'color.text.secondary')
+	local right = TooltipLines.money(copper)
+	if buy.isBasePrice == false then
+		local discount = view.icons:Inline(TooltipLines.DISCOUNT_ICON, LINE_HEIGHT_ICON, 'color.text.muted')
+		right = right .. ' ' .. (discount ~= '' and discount or TooltipLines.DISCOUNT_FALLBACK)
+	end
 	return {
 		left = icon ~= '' and (icon .. ' ' .. label) or label,
-		right = TooltipLines.money(copper),
+		right = right,
 		color = color(view, 'color.text.secondary'),
 		rightColor = color(view, 'color.text.primary'),
 	}
+end
+
+-- A label and copper for a vendor price: a unit "(each)", or "× N" at the stack price whenever the
+-- unit is not a whole copper, since coins cannot show a fraction.
+function vendorPriceText(label, unitPrice, stackPrice, stack)
+	if unitPrice % 1 ~= 0 and isPositiveFinite(stackPrice) and isPositiveFinite(stack) and stack > 1 then
+		return label .. TooltipLines.QUANTITY_MARK .. stack, stackPrice
+	end
+	return label .. TooltipLines.EACH_SUFFIX, unitPrice
+end
+
+-- Shift's rows under the Vendor row, each only when known.
+function vendorDetailRows(rows, buy, fullPrice, view)
+	local vendor = type(buy.cheapestVendor) == 'table' and buy.cheapestVendor or {}
+	if type(vendor.name) == 'string' and vendor.name ~= '' then
+		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_NAME_LABEL, vendor.name, view)
+	end
+	local standing = STANDING_WORDS[vendor.reaction]
+	if standing then
+		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_STANDING_LABEL, standing, view)
+	end
+	if fullPrice and isPositiveFinite(fullPrice.stackPrice) and isPositiveFinite(fullPrice.stack) then
+		local label, copper = vendorPriceText(
+			TooltipLines.VENDOR_FULL_PRICE_LABEL,
+			fullPrice.stackPrice / fullPrice.stack,
+			fullPrice.stackPrice,
+			fullPrice.stack
+		)
+		rows[#rows + 1] = reasonRow(label, TooltipLines.money(copper), view)
+	end
+	if type(buy.ageSeconds) == 'number' and buy.ageSeconds >= 0 then
+		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_READ_LABEL, TooltipLines.ago(buy.ageSeconds), view)
+	end
+	if buy.isLimited == true then
+		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_LIMITED, nil, view)
+	end
 end
 
 -- The lowest listing a unit, never the stack: buying is per unit.

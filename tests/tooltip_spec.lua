@@ -202,6 +202,108 @@ t.test('no vendor buy price, or none worth a copper figure: no Vendor row', func
 	t.eq(texts(plain)[2], 'Vendor (each) | ' .. coins('40c'), 'without the atlas the row reads its word alone')
 end)
 
+local PERCENT_ICON = icons:Inline('badge-percent', 0, 'color.text.muted')
+local STORE_ICON = icons:Inline('store', 0, 'color.text.secondary')
+local DISCOUNTED_READ = {
+	price = 40,
+	stackPrice = 40,
+	stack = 1,
+	source = 'seen',
+	isBasePrice = false,
+	isLimited = true,
+	ageSeconds = 3 * 86400,
+	cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 6 },
+}
+
+-- The Buy section's lines, header first, as texts.
+local function buyTexts(lines)
+	local result = {}
+	for _, text in ipairs(texts(lines)) do
+		if text == SEPARATOR then
+			break
+		end
+		result[#result + 1] = text
+	end
+	return result
+end
+
+t.test('a discounted vendor price carries the discount icon, and no details without Shift', function()
+	t.same(buyTexts(build({ vendorBuy = DISCOUNTED_READ })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Auction house (each) | ' .. coins('90c'),
+	})
+end)
+
+t.test('Shift adds who sold it, the standing it was read at, its age and limited stock', function()
+	local lines = build({ vendorBuy = DISCOUNTED_READ, isShiftDown = true })
+	t.same(buyTexts(lines), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Sold by | Gina Lang',
+		'Standing | Honored',
+		'Read | 3 d ago',
+		'Limited stock',
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	for index = 3, 6 do
+		t.eq(lines[index].textSize, 'small', texts(lines)[index])
+		t.same(lines[index].color, theme:Color('color.text.muted'))
+	end
+end)
+
+t.test('a full vendor price shows no icon; Shift adds the seed full price beside the read', function()
+	local fullRead = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		isBasePrice = true,
+		isLimited = false,
+		ageSeconds = 2 * 3600,
+		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 4 },
+	}
+	t.same(
+		buyTexts(build({ vendorBuy = fullRead, vendorFullPrice = { stackPrice = 50, stack = 1 } }))[2],
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c')
+	)
+	t.same(
+		buyTexts(build({ vendorBuy = fullRead, vendorFullPrice = { stackPrice = 50, stack = 1 }, isShiftDown = true })),
+		{
+			CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+			STORE_ICON .. ' Vendor (each) | ' .. coins('40c'),
+			'Sold by | Gina Lang',
+			'Standing | Neutral',
+			'Full price (each) | ' .. coins('50c'),
+			'Read | 2 h ago',
+			'Auction house (each) | ' .. coins('90c'),
+		}
+	)
+	local seedOnly = { price = 0.5, stackPrice = 100, stack = 200, source = 'seed', isBasePrice = true }
+	t.same(
+		buyTexts(
+			build({ vendorBuy = seedOnly, vendorFullPrice = { stackPrice = 100, stack = 200 }, isShiftDown = true })
+		)[3],
+		'Full price × 200 | ' .. coins('1s'),
+		'a seed stack reads at its stack price'
+	)
+	local unknownStanding =
+		{ price = 40, stackPrice = 40, stack = 1, isBasePrice = false, cheapestVendor = { reaction = 99 } }
+	t.eq(find(build({ vendorBuy = unknownStanding, isShiftDown = true }), 'Standing'), nil, 'never a raw number')
+end)
+
+t.test('without the icon atlas the discount reads as a word', function()
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	t.eq(
+		texts(build({ icons = bare, vendorBuy = DISCOUNTED_READ }))[2],
+		'Vendor (each) | ' .. coins('40c') .. ' Discounted'
+	)
+end)
+
 t.test('other shown rules move to the detail view', function()
 	t.eq(find(build({ stackCount = 20 }), 'Median'), nil, 'compact: the default rule only')
 	local detailed = build({ stackCount = 20, isDetail = true, options = { detailTrace = false } })
@@ -368,7 +470,7 @@ t.test('without the icon atlas each age is named in words, so two ages never sta
 end)
 
 t.test('a vendor, craft cost or own-sales base with an AHledger step names its base before the row age', function()
-	for source, label in pairs({ vendor = 'Vendor', craft = 'Craft cost', realized = 'Your sales' }) do
+	for source, label in pairs({ vendor = 'Vendor pays', craft = 'Craft cost', realized = 'Your sales' }) do
 		local stepped = quote()
 		local stepPrice = stepped.prices[1].price
 		stepPrice.source, stepPrice.baseAgeSeconds, stepPrice.rowAgeSeconds = source, 0, 7200
@@ -1373,6 +1475,42 @@ t.test('the Buy section reads what a vendor charges from VendorPrices, and nothi
 	t.eq(lines[3].left, 'Auction house (each)')
 	addon.vendorPrices = nil
 	t.eq(game:ShowItemTooltip(LINEN)[2].left, 'Auction house (each)', 'no vendor prices, no row')
+	t.same(addon.errors, {})
+end)
+
+t.test('a vendor price lookup that fails drops only the Vendor row', function()
+	local game, addon = startWithTable()
+	addon.vendorPrices = {
+		BuyPrice = function()
+			error('vendor store broke')
+		end,
+		FullPrice = function()
+			return nil
+		end,
+	}
+	local lines = game:ShowItemTooltip(LINEN)
+	t.eq(lines[2].left, 'Auction house (each)')
+	t.eq(lines[4].left, HEADER_ICON, 'the Sell section still shows')
+	t.same(addon.errors, {})
+end)
+
+t.test('Shift shows the vendor details through the modifier redraw, and the seed full price', function()
+	local game, addon = startWithTable()
+	addon.vendorPrices = {
+		BuyPrice = function()
+			return DISCOUNTED_READ
+		end,
+		FullPrice = function(_, itemId)
+			return itemId == LINEN and { stackPrice = 50, stack = 1 } or nil
+		end,
+	}
+	t.eq(game:ShowItemTooltip(LINEN)[3].left, 'Auction house (each)', 'no details without Shift')
+	game.modifiers.shift = true
+	game:Fire('MODIFIER_STATE_CHANGED', 'LSHIFT', 1)
+	local lines = game.env.GameTooltip.lines
+	t.truthy(lines[3].left:find('Sold by', 1, true), 'the first detail row sits under the Vendor row')
+	t.eq(lines[3].right, 'Gina Lang')
+	t.truthy(find(lines, 'Full price (each)'), 'the seed full price')
 	t.same(addon.errors, {})
 end)
 

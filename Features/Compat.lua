@@ -61,7 +61,7 @@ local compat = ns.host.AddModule({
 		{
 			key = 'noticeDismissed',
 			type = 'toggle',
-			label = 'AHledger overlap notice already seen (off shows it at the next login)',
+			label = 'AHledger overlap notice already seen. Off shows it at the next login.',
 			default = false,
 		},
 	},

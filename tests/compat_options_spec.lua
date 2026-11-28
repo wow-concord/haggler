@@ -215,7 +215,7 @@ t.test('a failing Settings API falls back to the legacy panel', function()
 	t.eq(added[1].name, 'Haggler')
 	local message = game.printed[#game.printed]:gsub('^.-|r: ', '')
 	t.eq(message:find('[;:]'), nil, message)
-	t.truthy(game.printed[#game.printed]:find('old options panel'))
+	t.eq(message, 'The Settings entry failed, so Haggler uses the old options panel', 'one sentence, no stop')
 	t.truthy(addon.Options.registrationError:find('client changed', 1, true), 'the error is kept, not printed')
 	t.same(addon.errors, {})
 end)
@@ -239,6 +239,31 @@ t.test('switch labels and chat lines join nothing with a colon or semicolon', fu
 	local reply = addon.host.RunCommand('options')
 	t.eq(#reply, 1)
 	t.eq(reply[1]:find(';', 1, true), nil, reply[1])
+end)
+
+t.test('every switch label in the entry carries at most one bracket, and never repeats its module', function()
+	local _, addon = start(FakeGame.addSettingsApi)
+	local function labelOf(key)
+		return addon.host.Module(key).definition.label
+	end
+	for _, entry in ipairs(addon.Options.toggleEntries(addon.host.Settings, labelOf)) do
+		local _, brackets = entry.label:gsub('%(', '')
+		t.truthy(brackets <= 1, entry.label)
+		local moduleName = labelOf(entry.moduleKey)
+		local _, mentions = entry.label:lower():gsub(moduleName:lower():gsub('%p', '%%%0'), '')
+		t.truthy(mentions <= 1, entry.label)
+	end
+	local repeated = addon.Options.toggleEntries({
+		Modules = function()
+			return { 'm' }
+		end,
+		Schema = function()
+			return { { key = 'enabled', type = 'toggle' }, { key = 'dots', type = 'toggle', label = 'Bag dots' } }
+		end,
+	}, function()
+		return 'Bag'
+	end)
+	t.eq(repeated[2].label, 'Bag dots', 'the module suffix is dropped when the label names it')
 end)
 
 t.test('legacy panel switches flip settings and open the window', function()

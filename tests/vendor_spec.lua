@@ -616,6 +616,21 @@ t.test('buyPrice survives a missing store, a broken seed and asks Questie only t
 	end, 'whole number')
 end)
 
+t.test('fullPrice is the seed base price alone, whatever the player has seen', function()
+	local seed = { build = 'test', items = { [THREAD] = 11, [ARROW] = { 10, 200 }, [FLUX] = 'x' } }
+	local db = openStore()
+	VendorStore.record(db, observation(ALICE, { { itemId = THREAD, price = 10 } }, { reaction = 4 }), NOW)
+	local prices = pricesOf(db, seed)
+	t.same(prices:FullPrice(THREAD), { stackPrice = 11, stack = 1 }, 'the seed, not the seen 10')
+	t.same(prices:FullPrice(ARROW), { stackPrice = 10, stack = 200 })
+	t.eq(prices:FullPrice(FLUX), nil, 'a broken seed entry')
+	t.eq(prices:FullPrice(12345), nil)
+	t.eq(pricesOf(db):FullPrice(THREAD), nil, 'no seed')
+	t.raises(function()
+		prices:FullPrice(1.5)
+	end, 'whole number')
+end)
+
 t.test('export returns per-vendor records oldest first, filtered by time', function()
 	local db = openStore()
 	VendorStore.record(db, observation(BOB, { { itemId = THREAD, price = 10 } }, { name = 'Bob' }), NOW + 100)

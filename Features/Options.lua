@@ -31,7 +31,7 @@ local ROW_HEIGHT = 36
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local registerCategory, registerWithSettingsApi, registerLegacyPanel, addOpenButton, moduleLabel, openWindow
-local refreshLegacyPanel, addCredit, refreshCredit, setInitializerName, hookSettingsPanelShow
+local refreshLegacyPanel, addCredit, refreshCredit, setInitializerName, hookSettingsPanelShow, switchLabel
 
 --- The on/off switches of every module, in module order and each module's schema order.
 --- @param settings table the host's settings store (Modules, Schema)
@@ -49,7 +49,7 @@ function Options.toggleEntries(settings, labelOf)
 				entries[#entries + 1] = {
 					moduleKey = moduleKey,
 					key = entry.key,
-					label = entry.key == 'enabled' and moduleName or (entry.label .. ' (' .. moduleName .. ')'),
+					label = entry.key == 'enabled' and moduleName or switchLabel(entry.label, moduleName),
 					variable = string.format('HAGGLER_%s_%s', moduleKey:upper(), entry.key:upper()),
 				}
 			end
@@ -105,9 +105,9 @@ function registerCategory()
 			hookSettingsPanelShow()
 			return
 		end
-		-- The error stays here for a bug report; chat says only what changed for the player.
+		-- Chat says only what changed for the player; the error itself is kept off it.
 		Options.registrationError = tostring(result)
-		wow:Print('the Settings entry failed, so Haggler uses the old options panel.')
+		wow:Print('The Settings entry failed, so Haggler uses the old options panel')
 	end
 	Options.category, Options.kind = registerLegacyPanel(entries), 'legacy'
 end
@@ -235,6 +235,15 @@ function refreshLegacyPanel(panel)
 		local isOn = settings:Get(toggle.entry.moduleKey, toggle.entry.key) == true
 		toggle.button:SetLabel(string.format('%s, %s', toggle.entry.label, isOn and 'on' or 'off'))
 	end
+end
+
+-- A switch names its module in brackets after it, unless the label already names it. Labels
+-- carry no brackets of their own, so the two never stack.
+function switchLabel(label, moduleName)
+	if label:lower():find(moduleName:lower(), 1, true) then
+		return label
+	end
+	return label .. ' (' .. moduleName .. ')'
 end
 
 function moduleLabel(moduleKey)
