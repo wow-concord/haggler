@@ -3,8 +3,9 @@
 	no game calls, so every line is tested in luajit.
 
 	  build(input) -> Line[]
-	  input = { quote, stackCount, isDetail, options, theme, advice?, icons? }
-	  advice  = Advice.forItem's BagAdvice for a bag slot
+	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy? }
+	  advice    = Advice.forItem's BagAdvice for a bag slot
+	  vendorBuy = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
 	  options = { detailTrace, detailSales, detailListings, detailVendor, detailSellTime,
 	              sellTimeNote }
 
@@ -15,8 +16,10 @@
 	then what one unit costs to buy: "Auction house (each)", the lowest listing, never a total.
 	A listing from the player's own scan shows the search icon and the age of the scan that
 	holds the item; one from AHledger (no scan minimum for the item) shows the plug icon and
-	the age of AHledger's row. A "Vendor (each)" row is meant to go above the AH row once its
-	source is settled (buySection).
+	the age of AHledger's row. Above it, when a vendor sells the item, "Vendor (each)" under the
+	store icon with the vendor's price and no age, or "Vendor × N" with the stack price for items
+	a vendor sells only in stacks whose unit is under a whole copper. With a vendor price and no
+	listing the header carries no age.
 
 	Sell: a header (the module icon) with the age of the default price's base, after its source's
 	icon: the search icon for Haggler's scans, the plug icon for AHledger. When a step read
@@ -59,6 +62,8 @@ TooltipLines.SEPARATOR = 'separator'
 TooltipLines.BUY_ICON = 'shopping-cart'
 -- What the Buy header says on a client without the icon atlas.
 TooltipLines.BUY_FALLBACK = 'Buy'
+TooltipLines.VENDOR_ICON = 'store'
+TooltipLines.VENDOR_LABEL = 'Vendor'
 TooltipLines.SCAN_AGE_ICON = 'search'
 TooltipLines.TABLE_AGE_ICON = 'plug'
 TooltipLines.AUCTION_HOUSE_LABEL = 'Auction house'
@@ -116,7 +121,7 @@ local appendSection, buySection, sellSection, detailSection, buyHeaderLine, sell
 local sellPriceRows, priceRow, ageText, traceLines, reasonLines, salesLines, listingsLines, vendorLine
 local sellTimeLines, hasAnyData, defaultEntry, color, unitsAtOrUnder, formatSellTime, levelIcon, topLowReason
 local lowReasonLine, capitalized, iconSetFor, signalLine, waitReasonRows, reasonRow, stackSuffix, detailRow
-local sellAgesText
+local sellAgesText, vendorRow, isPositiveFinite
 -- One icon set per theme, built on first use instead of on every hover.
 local iconSetsByTheme = setmetatable({}, { __mode = 'k' })
 
@@ -133,6 +138,7 @@ function TooltipLines.build(input)
 		theme = input.theme,
 		icons = input.icons or iconSetFor(input.theme),
 		isDetail = input.isDetail,
+		vendorBuy = type(input.vendorBuy) == 'table' and input.vendorBuy or nil,
 	}
 	local advice = type(input.advice) == 'table' and input.advice or nil
 	local lines = {}
@@ -212,12 +218,11 @@ function appendSection(lines, section)
 end
 
 -- The header and what a unit costs to buy; nothing when no row has a figure. Each row builder
--- returns a line or nil. A "Vendor (each)" row goes first once the user settles where a vendor's
--- buy price comes from. Never feed it facts.vendor or itemInfo.vendorPrice: that is what a vendor
--- pays the player (the sell price), not what buying from one costs.
+-- returns a line or nil. The Vendor row reads VendorPrices (what a vendor charges); never feed it
+-- facts.vendor or itemInfo.vendorPrice: that is what a vendor pays the player (the sell price).
 function buySection(quote, view)
 	local rows = {}
-	for _, buildRow in ipairs({ auctionHouseRow }) do
+	for _, buildRow in ipairs({ vendorRow, auctionHouseRow }) do
 		local row = buildRow(quote, view)
 		if row then
 			rows[#rows + 1] = row
@@ -281,7 +286,10 @@ end
 function buyHeaderLine(facts, view)
 	local cart = view.icons:Inline(TooltipLines.BUY_ICON, LINE_HEIGHT_ICON, 'color.text.accent')
 	local isFromScan = facts.lowestListedSource == 'scan'
-	local right = isFromScan and ageText('scan', facts.scanAge, view) or ageText('ahledger', facts.rowAge, view)
+	local right = nil
+	if type(facts.lowestListed) == 'number' then
+		right = isFromScan and ageText('scan', facts.scanAge, view) or ageText('ahledger', facts.rowAge, view)
+	end
 	return {
 		left = cart ~= '' and cart or TooltipLines.BUY_FALLBACK,
 		right = right,
@@ -326,6 +334,27 @@ function ageText(source, seconds, view)
 		icon = SOURCE_AGE_WORDS[source]
 	end
 	return text and (icon .. ' ' .. text) or icon
+end
+
+-- What a vendor charges a unit; a vendor stack whose unit is under a whole copper reads at the
+-- stack price, since coins cannot show a fraction.
+function vendorRow(_, view)
+	local buy = view.vendorBuy
+	if not buy or not isPositiveFinite(buy.price) then
+		return nil
+	end
+	local label, copper = TooltipLines.VENDOR_LABEL .. TooltipLines.EACH_SUFFIX, buy.price
+	local stack = buy.stack
+	if buy.price % 1 ~= 0 and isPositiveFinite(buy.stackPrice) and isPositiveFinite(stack) and stack > 1 then
+		label, copper = TooltipLines.VENDOR_LABEL .. TooltipLines.QUANTITY_MARK .. stack, buy.stackPrice
+	end
+	local icon = view.icons:Inline(TooltipLines.VENDOR_ICON, LINE_HEIGHT_ICON, 'color.text.secondary')
+	return {
+		left = icon ~= '' and (icon .. ' ' .. label) or label,
+		right = TooltipLines.money(copper),
+		color = color(view, 'color.text.secondary'),
+		rightColor = color(view, 'color.text.primary'),
+	}
 end
 
 -- The lowest listing a unit, never the stack: buying is per unit.
@@ -608,6 +637,10 @@ end
 
 function capitalized(text)
 	return (text:gsub('^%l', string.upper))
+end
+
+function isPositiveFinite(value)
+	return type(value) == 'number' and value > 0 and value < math.huge
 end
 
 return TooltipLines

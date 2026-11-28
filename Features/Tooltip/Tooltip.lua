@@ -1,6 +1,6 @@
 --[[
 	Tooltip: Haggler's lines on item tooltips (TooltipLines builds them). Compact by default:
-	a Buy section (the lowest listing a unit) and a Sell section (the default rule's price a
+	a Buy section (what a vendor charges, from VendorPrices, and the lowest listing a unit) and a Sell section (the default rule's price a
 	unit and for the stack), each with its data age. The detail block shows always, on a
 	modifier, or never. A gamepad modifier works through the client's GamePadEmulateShift /
 	Ctrl / Alt mapping. Holding or letting go of a modifier redraws the tooltip at once. Over a
@@ -88,6 +88,8 @@ function buildLines(module, itemId, info)
 		theme = ns.theme,
 		advice = bagAdvice(itemId, info),
 		icons = tooltipIcons(),
+		-- ns.vendorPrices is nil while the Vendor prices module is off.
+		vendorBuy = ns.vendorPrices and ns.vendorPrices:BuyPrice(itemId) or nil,
 	})
 end
 

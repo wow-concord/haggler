@@ -162,6 +162,46 @@ t.test('no listing: the Buy section and its separator are left out', function()
 	})
 end)
 
+t.test('a vendor buy price heads the Buy section under the store icon, with no age of its own', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local lines = build({ stackCount = 20, vendorBuy = { price = 40, stackPrice = 40, stack = 1, source = 'seed' } })
+	t.same({ unpack(texts(lines), 1, 3) }, {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		storeIcon .. ' Vendor (each) | ' .. coins('40c'),
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	t.same(lines[2].color, theme:Color('color.text.secondary'))
+	t.same(lines[2].rightColor, theme:Color('color.text.primary'))
+end)
+
+t.test('a vendor price alone keeps the Buy section, its header without an age', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local lines = build({
+		quote = quote({ facts = { salesPerDay = 2, rowAge = 3600 } }),
+		vendorBuy = { price = 40, stackPrice = 40, stack = 1, source = 'seen' },
+	})
+	t.same({ unpack(texts(lines), 1, 3) }, { CART_ICON, storeIcon .. ' Vendor (each) | ' .. coins('40c'), SEPARATOR })
+end)
+
+t.test('items a vendor sells in stacks read the stack price, never a rounded unit', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local arrows = { price = 0.5, stackPrice = 100, stack = 200, source = 'seed' }
+	t.eq(texts(build({ vendorBuy = arrows }))[2], storeIcon .. ' Vendor × 200 | ' .. coins('1s'))
+end)
+
+t.test('no vendor buy price, or none worth a copper figure: no Vendor row', function()
+	for _, vendorBuy in ipairs({ false, { price = 0, stackPrice = 0, stack = 1 }, { price = 0 / 0, stack = 1 } }) do
+		t.eq(find(build({ vendorBuy = vendorBuy or nil }), 'Vendor (each)'), nil)
+	end
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	local plain = build({ icons = bare, vendorBuy = { price = 40, stackPrice = 40, stack = 1 } })
+	t.eq(texts(plain)[2], 'Vendor (each) | ' .. coins('40c'), 'without the atlas the row reads its word alone')
+end)
+
 t.test('other shown rules move to the detail view', function()
 	t.eq(find(build({ stackCount = 20 }), 'Median'), nil, 'compact: the default rule only')
 	local detailed = build({ stackCount = 20, isDetail = true, options = { detailTrace = false } })
@@ -1314,6 +1354,25 @@ t.test('item tooltips get the Buy and Sell sections, no credit; a modifier chang
 	local detailed = game.env.GameTooltip.lines
 	t.eq(detailed[5].left, 'Price', 'Shift no longer switches to a unit view')
 	t.truthy(#detailed > 6, 'Shift shows the detail block')
+	t.same(addon.errors, {})
+end)
+
+t.test('the Buy section reads what a vendor charges from VendorPrices, and nothing with vendors off', function()
+	local game, addon = startWithTable()
+	local asked = {}
+	addon.vendorPrices = {
+		BuyPrice = function(_, itemId)
+			asked[#asked + 1] = itemId
+			return { price = 40, stackPrice = 40, stack = 1, source = 'seen' }
+		end,
+	}
+	local lines = game:ShowItemTooltip(LINEN)
+	t.same(asked, { LINEN })
+	t.eq(lines[2].left, icons:Inline('store', 0, 'color.text.secondary') .. ' Vendor (each)')
+	t.eq(lines[2].right, FakeGame.coins('40c'))
+	t.eq(lines[3].left, 'Auction house (each)')
+	addon.vendorPrices = nil
+	t.eq(game:ShowItemTooltip(LINEN)[2].left, 'Auction house (each)', 'no vendor prices, no row')
 	t.same(addon.errors, {})
 end)
 
