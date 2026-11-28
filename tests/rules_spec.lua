@@ -202,8 +202,8 @@ t.test('a base without data fails with a reason', function()
 	local cases = {
 		{ { kind = 'median' }, 'no AHledger median' },
 		{ { kind = 'vendor' }, 'no vendor price' },
-		{ { kind = 'craftCost' }, 'no craftCost' },
-		{ { kind = 'realized' }, 'no realized' },
+		{ { kind = 'craftCost' }, 'no craft cost' },
+		{ { kind = 'realized' }, 'no sales of yours' },
 	}
 	for _, case in ipairs(cases) do
 		local price, reason = evaluate(rule(case[1]), { info = { maxStack = 20, vendorPrice = 0 } })
@@ -287,7 +287,7 @@ t.test('a step whose base has no data is skipped and traced', function()
 	)
 	t.eq(price.copper, 500)
 	t.eq(price.trace[2].kind, 'skip')
-	t.eq(price.trace[2].label, 'floor skipped, no craftCost')
+	t.eq(price.trace[2].label, 'floor skipped, no craft cost')
 end)
 
 t.test('trace labels join no clauses with a colon, semicolon, middle dot or dash', function()
@@ -304,12 +304,59 @@ t.test('trace labels join no clauses with a colon, semicolon, middle dot or dash
 		rule({ kind = 'median' }, { { kind = 'floor', percent = 100, base = { kind = 'craftCost' } } }),
 		{ row = ROW }
 	)
+	local texts = {}
 	for _, price in ipairs({ thin, allBait, skipped }) do
 		for _, entry in ipairs(price.trace) do
-			t.eq(entry.label:find('[:;\194\183]'), nil, entry.label)
-			t.eq(entry.label:find(' %- '), nil, entry.label)
+			texts[#texts + 1] = entry.label
 		end
 	end
+	local broken = { kind = 'median' }
+	local throwing = context({ row = ROW })
+	throwing.priceRow = function()
+		error('AHledger broke')
+	end
+	local junk, junkSourceReason = Rules.evaluate(rule(broken), ITEM, throwing)
+	t.eq(junk, nil)
+	texts[#texts + 1] = junkSourceReason
+	for _, base in ipairs({ { kind = 'median' }, { kind = 'low30' }, { kind = 'craftCost' }, { kind = 'realized' } }) do
+		local _, reason = evaluate(rule(base), {})
+		texts[#texts + 1] = reason
+	end
+	local _, invalid = evaluate({ id = 'x', name = 'X', base = { kind = 'nope' }, steps = {} }, { row = ROW })
+	texts[#texts + 1] = invalid
+	local _, junkReason = evaluate(rule({ kind = 'median' }), { row = { median = 'lots' } })
+	texts[#texts + 1] = junkReason
+	for _, text in ipairs(texts) do
+		t.eq(text:find('[:;\194\183]'), nil, text)
+		t.eq(text:find(' %- '), nil, text)
+	end
+end)
+
+t.test('reasons and bad inputs name each figure as a player reads it, never an internal key', function()
+	local _, low30 = evaluate(rule({ kind = 'low30' }), {})
+	t.eq(low30, 'no AHledger 30-day low')
+	local _, junk = evaluate(rule({ kind = 'median7' }), { row = { m7 = 'lots', median = 500 } })
+	t.eq(junk, 'AHledger 7-day median is not a number')
+	local throwing = context({ row = ROW, levels = { { price = 100, qty = 5 } } })
+	throwing.priceRow = function()
+		error('AHledger broke')
+	end
+	local price = Rules.evaluate(rule({ kind = 'lowest' }), ITEM, throwing)
+	t.eq(price.trace[1].label, 'lowest scan price')
+	local texts = {}
+	for _, reason in ipairs(price.confidence.reasons) do
+		texts[#texts + 1] = reason.text
+	end
+	t.truthy(table.concat(texts, ' / '):find('AHledger data was not usable', 1, true), table.concat(texts, ' / '))
+	for _, text in ipairs(texts) do
+		t.eq(text:find('source', 1, true), nil, text)
+		t.eq(text:find('%f[%w](m7|lo|hi|min|craftCost|realized)%f[%W]'), nil, text)
+	end
+	local capped = evaluate(
+		rule({ kind = 'lowest' }, { { kind = 'cap', percent = 100, base = { kind = 'craftCost' } } }),
+		{ row = ROW, levels = { { price = 900, qty = 5 } }, craftCost = 400 }
+	)
+	t.eq(capped.trace[2].label, 'cap at 100% craft cost')
 end)
 
 t.test('a price keeps each source age apart: the base, and the AHledger row a step read', function()
@@ -438,7 +485,7 @@ t.group('evaluate contract')
 t.test('an invalid rule returns a reason; a bad call throws', function()
 	local price, reason = Rules.evaluate({ id = 'x', name = 'X', base = { kind = 'median' } }, ITEM, context())
 	t.eq(price, nil)
-	t.eq(reason, 'invalid rule: steps must be a list')
+	t.eq(reason, "This rule can't be used", 'one plain line, whatever the rule breaks')
 	t.raises(function()
 		Rules.evaluate(Rules.builtIns().median, 'linen', context())
 	end, 'itemId')

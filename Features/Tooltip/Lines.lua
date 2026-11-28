@@ -19,11 +19,13 @@
 	source is settled (buySection).
 
 	Sell: a header (the module icon) with the age of the default price's base, after its source's
-	icon: the search icon for Haggler's scans, the plug icon for AHledger, nothing for other
-	sources (vendor, craft cost, realized) or no price. When a step read AHledger's row (the
-	default rule caps at the median), the plug icon and that row's own age follow; a scan icon
-	never carries AHledger's age. An icon without a known age stands alone; no header says
-	"no data". For a bag slot a Signal line with the decision (Advice.forItem's) as its glyph and
+	icon: the search icon for Haggler's scans, the plug icon for AHledger. When a step read
+	AHledger's row (the default rule caps at the median), the plug icon and that row's own age
+	follow; a vendor, craft cost or own-sales base then names itself first ("Craft cost"), with
+	no age, and with no such step it shows nothing, as does no price. A scan icon never carries
+	AHledger's age: an unknown scan time leaves the search icon alone. On a client without the
+	icon atlas each age is named in words ("Scan 5 min AHledger 2 d"), so two ages never stand
+	bare side by side. No header says "no data". For a bag slot a Signal line with the decision (Advice.forItem's) as its glyph and
 	word; then the default rule's price as "Price (each)" and "Price × N" for the hovered stack,
 	or one "Price" line for a single item. Details come last: a Wait says why in short label and
 	value rows (small, indented, muted): how far under the usual price the lowest listing is,
@@ -82,6 +84,12 @@ TooltipLines.SELL_TIME_NOTE = 'estimate from sales per day, not in-game time'
 TooltipLines.OWN_SALES_VALUE = 'Own scans'
 -- The price sources a header can name by icon, keyed by Price.source and facts.lowestListedSource.
 local SOURCE_AGE_ICONS = { scan = TooltipLines.SCAN_AGE_ICON, ahledger = TooltipLines.TABLE_AGE_ICON }
+-- What an age's icon says on a client without the icon atlas, as the Buy header falls back.
+local SOURCE_AGE_WORDS = { scan = 'Scan', ahledger = 'AHledger' }
+-- The base named before an AHledger row age, for bases with no age icon of their own.
+local BASE_SOURCE_LABELS = { vendor = 'Vendor', craft = 'Craft cost', realized = 'Your sales' }
+-- The detail line of a shown rule that fails validation.
+TooltipLines.UNUSABLE_RULE_NAMED = "%s can't be used"
 local SECONDS_PER_HOUR = 3600
 local SECONDS_PER_DAY = 86400
 local COPPER_PER_SILVER = 100
@@ -294,11 +302,11 @@ function sellHeaderLine(price, view)
 end
 
 function sellAgesText(price, view)
-	local base = ageText(price.source, price.baseAgeSeconds or price.ageSeconds, view)
 	local row = price.source ~= 'ahledger'
 			and price.rowAgeSeconds ~= nil
 			and ageText('ahledger', price.rowAgeSeconds, view)
 		or nil
+	local base = ageText(price.source, price.baseAgeSeconds, view) or (row and BASE_SOURCE_LABELS[price.source])
 	if base and row then
 		return base .. ' ' .. row
 	end
@@ -306,7 +314,7 @@ function sellAgesText(price, view)
 end
 
 -- The age after its source's icon; nil for a source no icon names. Without a known age the icon
--- stands alone, and on a client without the atlas the age does.
+-- stands alone. On a client without the atlas the source's word takes the icon's place.
 function ageText(source, seconds, view)
 	local iconName = SOURCE_AGE_ICONS[source]
 	if not iconName then
@@ -315,7 +323,7 @@ function ageText(source, seconds, view)
 	local text = type(seconds) == 'number' and TooltipLines.age(seconds) or nil
 	local icon = view.icons:Inline(iconName, LINE_HEIGHT_ICON, 'color.text.muted')
 	if icon == '' then
-		return text
+		icon = SOURCE_AGE_WORDS[source]
 	end
 	return text and (icon .. ' ' .. text) or icon
 end
@@ -451,7 +459,13 @@ end
 function reasonLines(detail, entries, view)
 	for _, entry in ipairs(entries) do
 		local prefix = entry.isDefault and '' or (entry.name .. ', ')
-		if not entry.price then
+		if not entry.price and entry.reason == ns.Rules.UNUSABLE_RULE then
+			detail[#detail + 1] = {
+				left = entry.isDefault and entry.reason or string.format(TooltipLines.UNUSABLE_RULE_NAMED, entry.name),
+				color = color(view, 'color.text.muted'),
+				wrap = true,
+			}
+		elseif not entry.price then
 			detail[#detail + 1] = {
 				left = prefix .. 'no price, ' .. tostring(entry.reason or 'no data'),
 				color = color(view, 'color.text.muted'),

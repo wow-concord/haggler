@@ -49,7 +49,7 @@ function Options.toggleEntries(settings, labelOf)
 				entries[#entries + 1] = {
 					moduleKey = moduleKey,
 					key = entry.key,
-					label = entry.key == 'enabled' and moduleName or (moduleName .. ': ' .. entry.label),
+					label = entry.key == 'enabled' and moduleName or (entry.label .. ' (' .. moduleName .. ')'),
 					variable = string.format('HAGGLER_%s_%s', moduleKey:upper(), entry.key:upper()),
 				}
 			end
@@ -79,7 +79,7 @@ local options = ns.host.AddModule({
 			run = function()
 				refreshCredit()
 				if not ns.wow:OpenOptionsCategory(Options.category) then
-					return { 'The Settings window did not open; find Haggler under Settings → AddOns.' }
+					return { 'The Settings window did not open. Find Haggler under Settings → AddOns.' }
 				end
 				return {}
 			end,
@@ -105,7 +105,9 @@ function registerCategory()
 			hookSettingsPanelShow()
 			return
 		end
-		wow:Print('the Settings entry failed (' .. tostring(result) .. '); using the old options panel.')
+		-- The error stays here for a bug report; chat says only what changed for the player.
+		Options.registrationError = tostring(result)
+		wow:Print('the Settings entry failed, so Haggler uses the old options panel.')
 	end
 	Options.category, Options.kind = registerLegacyPanel(entries), 'legacy'
 end
@@ -231,7 +233,7 @@ function refreshLegacyPanel(panel)
 	local settings = ns.host.Settings
 	for _, toggle in ipairs(panel.toggles) do
 		local isOn = settings:Get(toggle.entry.moduleKey, toggle.entry.key) == true
-		toggle.button:SetLabel(string.format('%s: %s', toggle.entry.label, isOn and 'on' or 'off'))
+		toggle.button:SetLabel(string.format('%s, %s', toggle.entry.label, isOn and 'on' or 'off'))
 	end
 end
 

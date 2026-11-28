@@ -213,8 +213,32 @@ t.test('a failing Settings API falls back to the legacy panel', function()
 	t.eq(addon.Options.kind, 'legacy')
 	t.eq(added[1], game.env.HagglerOptionsPanel)
 	t.eq(added[1].name, 'Haggler')
+	local message = game.printed[#game.printed]:gsub('^.-|r: ', '')
+	t.eq(message:find('[;:]'), nil, message)
 	t.truthy(game.printed[#game.printed]:find('old options panel'))
+	t.truthy(addon.Options.registrationError:find('client changed', 1, true), 'the error is kept, not printed')
 	t.same(addon.errors, {})
+end)
+
+t.test('switch labels and chat lines join nothing with a colon or semicolon', function()
+	local game, addon = start(FakeGame.addSettingsApi)
+	local entries = addon.Options.toggleEntries(addon.host.Settings, function(key)
+		return key == 'bags' and 'Bags' or key
+	end)
+	local badge
+	for _, entry in ipairs(entries) do
+		t.eq(entry.label:find('Bags: ', 1, true), nil, entry.label)
+		if entry.key == 'decisionBadge' then
+			badge = entry
+		end
+	end
+	t.eq(badge.label:sub(-#' (Bags)'), ' (Bags)', 'the module follows the switch in brackets')
+	game.env.Settings.OpenToCategory = function()
+		error('closed')
+	end
+	local reply = addon.host.RunCommand('options')
+	t.eq(#reply, 1)
+	t.eq(reply[1]:find(';', 1, true), nil, reply[1])
 end)
 
 t.test('legacy panel switches flip settings and open the window', function()
@@ -232,10 +256,10 @@ t.test('legacy panel switches flip settings and open the window', function()
 			scanToggle = toggle
 		end
 	end
-	t.truthy(scanToggle.button.label:GetText():find(': on'))
+	t.eq(scanToggle.button.label:GetText(), 'Auction house scan, on')
 	scanToggle.button:Click()
 	t.eq(addon.host.IsEnabled('scan'), false)
-	t.truthy(scanToggle.button.label:GetText():find(': off'))
+	t.eq(scanToggle.button.label:GetText(), 'Auction house scan, off')
 	panel.openButton:Click()
 	t.truthy(addon.window:IsOpen())
 end)

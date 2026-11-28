@@ -36,6 +36,7 @@ local function price(copper, level, reasons, trace)
 	return {
 		copper = copper,
 		ageSeconds = 3 * 3600,
+		baseAgeSeconds = 3 * 3600,
 		source = 'ahledger',
 		step = 1,
 		confidence = { level = level or 'high', reasons = reasons or {} },
@@ -262,7 +263,7 @@ t.test("Sell header: the age of the price's own source, search for a scan, plug 
 	local scanned = quote({
 		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94) } },
 	})
-	scanned.prices[1].price.source, scanned.prices[1].price.ageSeconds = 'scan', 300
+	scanned.prices[1].price.source, scanned.prices[1].price.baseAgeSeconds = 'scan', 300
 	t.eq(build({ quote = scanned })[4].right, SEARCH_ICON .. ' 5 min')
 	t.eq(build({ quote = quote() })[4].right, PLUG_ICON .. ' 3 h')
 end)
@@ -281,6 +282,57 @@ t.test('no age next to a source never reads no data: the icon stands alone, or n
 	t.eq(unpriced[4].right, nil, 'no price, no age')
 	for _, line in ipairs(texts(build({ quote = quote({ ages = {} }) }))) do
 		t.eq(line:find('no data', 1, true), nil, line)
+	end
+end)
+
+-- A quote for linen priced by the real default rule, from a scan dated scannedAt (nil for a
+-- snapshot without a valid time) and an AHledger table two days old.
+local function realisticQuote(scannedAt)
+	local api = FakeGame.newAHledgerAPI({ market = MARKET, updated = NOW - 2 * 86400, rows = AHLEDGER_ROWS })
+	local ctx = ns.PriceContext.build({
+		now = NOW,
+		marketKey = MARKET,
+		priceSource = ns.PriceData.newAHledgerSource(function()
+			return api
+		end),
+		snapshot = {
+			at = scannedAt,
+			items = { [LINEN] = { min = 100, units = 40, levels = { { price = 100, qty = 40 } } } },
+		},
+	})
+	local defaultPrice = ns.Rules.evaluate(ns.Rules.builtIns().realistic, LINEN, ctx)
+	return {
+		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = defaultPrice } },
+		facts = ns.PriceContext.facts(ctx, LINEN),
+	}
+end
+
+t.test('an unknown scan time shows the search icon alone, never the AHledger age after it', function()
+	local lines = build({ quote = realisticQuote(nil) })
+	t.eq(lines[4].right, SEARCH_ICON .. ' ' .. PLUG_ICON .. ' 2 d', 'the median cap still dates AHledger by its row')
+	t.eq(build({ quote = realisticQuote(NOW - 300) })[4].right, SEARCH_ICON .. ' 5 min ' .. PLUG_ICON .. ' 2 d')
+end)
+
+t.test('without the icon atlas each age is named in words, so two ages never stand bare', function()
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	local lines = build({ quote = realisticQuote(NOW - 300), icons = bare })
+	t.eq(lines[1].left, TooltipLines.BUY_FALLBACK)
+	t.eq(lines[1].right, 'Scan 5 min')
+	t.eq(lines[4].right, 'Scan 5 min AHledger 2 d')
+	t.eq(build({ quote = realisticQuote(nil), icons = bare })[4].right, 'Scan AHledger 2 d')
+	t.eq(build({ quote = quote(), icons = bare })[4].right, 'AHledger 3 h')
+end)
+
+t.test('a vendor, craft cost or own-sales base with an AHledger step names its base before the row age', function()
+	for source, label in pairs({ vendor = 'Vendor', craft = 'Craft cost', realized = 'Your sales' }) do
+		local stepped = quote()
+		local stepPrice = stepped.prices[1].price
+		stepPrice.source, stepPrice.baseAgeSeconds, stepPrice.rowAgeSeconds = source, 0, 7200
+		t.eq(build({ quote = stepped })[4].right, label .. ' ' .. PLUG_ICON .. ' 2 h', source)
 	end
 end)
 
@@ -382,6 +434,27 @@ t.test('detail lines that can grow long wrap at the tooltip width', function()
 			end
 		end
 		t.truthy(isFound, text)
+	end
+end)
+
+t.test('a rule that fails validation reads one plain line, no internal detail', function()
+	local brokenQuote = quote({
+		prices = {
+			{ ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94) },
+			{ ruleId = 'mine', name = 'Mine', isDefault = false, reason = ns.Rules.UNUSABLE_RULE },
+		},
+	})
+	local lefts = {}
+	for _, line in ipairs(build({ quote = brokenQuote, isDetail = true, options = { detailTrace = false } })) do
+		lefts[#lefts + 1] = line.left or ''
+	end
+	local joined = table.concat(lefts, ' / ')
+	t.truthy(joined:find("Mine can't be used", 1, true), joined)
+	t.eq(joined:find('no price, Mine', 1, true), nil)
+	t.eq(joined:find('invalid', 1, true), nil, joined)
+	for _, left in ipairs(lefts) do
+		local words = left:gsub('|T.-|t', '')
+		t.eq(words:find('[:;]'), nil, left)
 	end
 end)
 

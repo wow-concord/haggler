@@ -151,7 +151,7 @@ function noteMarketMismatch(wow, prices)
 		return
 	end
 	wow:Print(
-		string.format('AHledger uses %s; Haggler prices %s, the auction house you are on.', sourceMarket, marketKey)
+		string.format('AHledger uses %s. Haggler prices %s, the auction house you are on.', sourceMarket, marketKey)
 	)
 end
 
