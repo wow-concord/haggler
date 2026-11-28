@@ -266,6 +266,27 @@ t.test('every switch label in the entry carries at most one bracket, and never r
 	t.eq(repeated[2].label, 'Bag dots', 'the module suffix is dropped when the label names it')
 end)
 
+t.test('the module suffix is dropped only when the label names the module as a whole word', function()
+	local _, addon = start(FakeGame.addSettingsApi)
+	local function entriesFor(label, moduleName)
+		return addon.Options.toggleEntries({
+			Modules = function()
+				return { 'm' }
+			end,
+			Schema = function()
+				return { { key = 'dots', type = 'toggle', label = label } }
+			end,
+		}, function()
+			return moduleName
+		end)
+	end
+	t.eq(entriesFor('Bagsy dots', 'Bag')[1].label, 'Bagsy dots (Bag)', 'a longer word is not the module')
+	t.eq(entriesFor('Show the bag value', 'Bag')[1].label, 'Show the bag value', 'any case')
+	t.eq(entriesFor('Mark vendor prices here', 'Vendor prices')[1].label, 'Mark vendor prices here')
+	t.eq(entriesFor('Vendor pricesheet', 'Vendor prices')[1].label, 'Vendor pricesheet (Vendor prices)')
+	t.eq(entriesFor('Total value of the bags', 'Bags')[1].label, 'Total value of the bags')
+end)
+
 t.test('legacy panel switches flip settings and open the window', function()
 	local added = {}
 	local _, addon = start(function(g)

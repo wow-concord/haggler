@@ -3,11 +3,9 @@
 	no game calls, so every line is tested in luajit.
 
 	  build(input) -> Line[]
-	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy?,
-	            vendorFullPrice?, isShiftDown? }
-	  advice          = Advice.forItem's BagAdvice for a bag slot
-	  vendorBuy       = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
-	  vendorFullPrice = VendorPrices:FullPrice, the seed's base price { stackPrice, stack }
+	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy? }
+	  advice    = Advice.forItem's BagAdvice for a bag slot
+	  vendorBuy = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
 	  options = { detailTrace, detailSales, detailListings, detailVendor, detailSellTime,
 	              sellTimeNote }
 
@@ -22,9 +20,9 @@
 	store icon with the vendor's price and no age, or "Vendor × N" with the stack price whenever
 	the unit price is not a whole copper (items a vendor sells in stacks, like arrows). A price
 	below the vendor's base (BuyPrice.isBasePrice false) carries the discount icon after it, or
-	"Discounted" without the atlas. Holding Shift adds small rows under it: who sold it, the
-	standing it was read at as a word, the seed's full price, how long ago it was read, and
-	"Limited stock"; each only when known. With a vendor price and no listing the header carries
+	"Discounted" without the atlas. While the detail block shows, small rows go under it: who
+	sold it, the standing it was read at as a word (left out when the price is a base kept from
+	an earlier read), how long ago it was read, and "Limited stock"; each only when known. With a vendor price and no listing the header carries
 	no age.
 
 	Sell: a header (the module icon) with the age of the default price's base, after its source's
@@ -70,11 +68,12 @@ TooltipLines.BUY_ICON = 'shopping-cart'
 TooltipLines.BUY_FALLBACK = 'Buy'
 TooltipLines.VENDOR_ICON = 'store'
 TooltipLines.VENDOR_LABEL = 'Vendor'
+-- What a vendor pays the player, apart from what a vendor charges.
+TooltipLines.VENDOR_PAYS_LABEL = 'Vendor pays'
 TooltipLines.DISCOUNT_ICON = 'badge-percent'
 TooltipLines.DISCOUNT_FALLBACK = 'Discounted'
 TooltipLines.VENDOR_NAME_LABEL = 'Sold by'
 TooltipLines.VENDOR_STANDING_LABEL = 'Standing'
-TooltipLines.VENDOR_FULL_PRICE_LABEL = 'Full price'
 TooltipLines.VENDOR_READ_LABEL = 'Read'
 TooltipLines.VENDOR_LIMITED = 'Limited stock'
 -- The client's standing levels, 1 to 8, as the reputation pane names them.
@@ -107,7 +106,7 @@ local SOURCE_AGE_ICONS = { scan = TooltipLines.SCAN_AGE_ICON, ahledger = Tooltip
 -- What an age's icon says on a client without the icon atlas, as the Buy header falls back.
 local SOURCE_AGE_WORDS = { scan = 'Scan', ahledger = 'AHledger' }
 -- The base named before an AHledger row age, for bases with no age icon of their own.
-local BASE_SOURCE_LABELS = { vendor = 'Vendor pays', craft = 'Craft cost', realized = 'Your sales' }
+local BASE_SOURCE_LABELS = { vendor = TooltipLines.VENDOR_PAYS_LABEL, craft = 'Craft cost', realized = 'Your sales' }
 -- The detail line of a shown rule that fails validation.
 TooltipLines.UNUSABLE_RULE_NAMED = "%s can't be used"
 local SECONDS_PER_HOUR = 3600
@@ -154,8 +153,6 @@ function TooltipLines.build(input)
 		icons = input.icons or iconSetFor(input.theme),
 		isDetail = input.isDetail,
 		vendorBuy = type(input.vendorBuy) == 'table' and input.vendorBuy or nil,
-		vendorFullPrice = type(input.vendorFullPrice) == 'table' and input.vendorFullPrice or nil,
-		isShiftDown = input.isShiftDown == true,
 	}
 	local advice = type(input.advice) == 'table' and input.advice or nil
 	local lines = {}
@@ -243,8 +240,8 @@ function buySection(quote, view)
 		local row = buildRow(quote, view)
 		if row then
 			rows[#rows + 1] = row
-			if buildRow == vendorRow and view.isShiftDown then
-				vendorDetailRows(rows, view.vendorBuy, view.vendorFullPrice, view)
+			if buildRow == vendorRow and view.isDetail then
+				vendorDetailRows(rows, view.vendorBuy, view)
 			end
 		end
 	end
@@ -386,24 +383,16 @@ function vendorPriceText(label, unitPrice, stackPrice, stack)
 	return label .. TooltipLines.EACH_SUFFIX, unitPrice
 end
 
--- Shift's rows under the Vendor row, each only when known.
-function vendorDetailRows(rows, buy, fullPrice, view)
+-- The detail rows under the Vendor row, each only when known. A price kept from an earlier base
+-- read was not read at the latest standing, so the standing stays out.
+function vendorDetailRows(rows, buy, view)
 	local vendor = type(buy.cheapestVendor) == 'table' and buy.cheapestVendor or {}
 	if type(vendor.name) == 'string' and vendor.name ~= '' then
 		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_NAME_LABEL, vendor.name, view)
 	end
-	local standing = STANDING_WORDS[vendor.reaction]
+	local standing = vendor.priceFromBase ~= true and STANDING_WORDS[vendor.reaction] or nil
 	if standing then
 		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_STANDING_LABEL, standing, view)
-	end
-	if fullPrice and isPositiveFinite(fullPrice.stackPrice) and isPositiveFinite(fullPrice.stack) then
-		local label, copper = vendorPriceText(
-			TooltipLines.VENDOR_FULL_PRICE_LABEL,
-			fullPrice.stackPrice / fullPrice.stack,
-			fullPrice.stackPrice,
-			fullPrice.stack
-		)
-		rows[#rows + 1] = reasonRow(label, TooltipLines.money(copper), view)
 	end
 	if type(buy.ageSeconds) == 'number' and buy.ageSeconds >= 0 then
 		rows[#rows + 1] = reasonRow(TooltipLines.VENDOR_READ_LABEL, TooltipLines.ago(buy.ageSeconds), view)
@@ -606,7 +595,7 @@ end
 -- What a vendor pays for the stack, labelled with the count as the other stack rows are.
 function vendorLine(facts, view)
 	return {
-		left = 'Vendor' .. stackSuffix(view.stackCount),
+		left = TooltipLines.VENDOR_PAYS_LABEL .. stackSuffix(view.stackCount),
 		right = TooltipLines.money(facts.vendor * view.stackCount),
 		color = color(view, 'color.text.muted'),
 		rightColor = color(view, 'color.text.secondary'),

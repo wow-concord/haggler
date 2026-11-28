@@ -209,10 +209,19 @@ local DISCOUNTED_READ = {
 	stackPrice = 40,
 	stack = 1,
 	source = 'seen',
+	vendorCount = 1,
 	isBasePrice = false,
 	isLimited = true,
 	ageSeconds = 3 * 86400,
-	cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 6 },
+	cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 6, priceFromBase = false },
+}
+-- Vendor details show with the detail block only; these options keep that block to the vendor.
+local VENDOR_ONLY = {
+	detailTrace = false,
+	detailSales = false,
+	detailListings = false,
+	detailVendor = false,
+	detailSellTime = false,
 }
 
 -- The Buy section's lines, header first, as texts.
@@ -227,7 +236,7 @@ local function buyTexts(lines)
 	return result
 end
 
-t.test('a discounted vendor price carries the discount icon, and no details without Shift', function()
+t.test('a discounted vendor price carries the discount icon, and no details without the detail block', function()
 	t.same(buyTexts(build({ vendorBuy = DISCOUNTED_READ })), {
 		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
 		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
@@ -235,8 +244,8 @@ t.test('a discounted vendor price carries the discount icon, and no details with
 	})
 end)
 
-t.test('Shift adds who sold it, the standing it was read at, its age and limited stock', function()
-	local lines = build({ vendorBuy = DISCOUNTED_READ, isShiftDown = true })
+t.test('the detail block adds who sold it, the standing it was read at, its age and limited stock', function()
+	local lines = build({ vendorBuy = DISCOUNTED_READ, isDetail = true, options = VENDOR_ONLY })
 	t.same(buyTexts(lines), {
 		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
 		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
@@ -252,44 +261,81 @@ t.test('Shift adds who sold it, the standing it was read at, its age and limited
 	end
 end)
 
-t.test('a full vendor price shows no icon; Shift adds the seed full price beside the read', function()
+t.test('a full vendor price shows no icon; the detail block adds its read, never a seed price', function()
 	local fullRead = {
 		price = 40,
 		stackPrice = 40,
 		stack = 1,
 		source = 'seen',
+		vendorCount = 1,
 		isBasePrice = true,
 		isLimited = false,
 		ageSeconds = 2 * 3600,
-		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 4 },
+		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 4, priceFromBase = false },
 	}
-	t.same(
-		buyTexts(build({ vendorBuy = fullRead, vendorFullPrice = { stackPrice = 50, stack = 1 } }))[2],
-		STORE_ICON .. ' Vendor (each) | ' .. coins('40c')
-	)
-	t.same(
-		buyTexts(build({ vendorBuy = fullRead, vendorFullPrice = { stackPrice = 50, stack = 1 }, isShiftDown = true })),
-		{
-			CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
-			STORE_ICON .. ' Vendor (each) | ' .. coins('40c'),
-			'Sold by | Gina Lang',
-			'Standing | Neutral',
-			'Full price (each) | ' .. coins('50c'),
-			'Read | 2 h ago',
-			'Auction house (each) | ' .. coins('90c'),
-		}
-	)
-	local seedOnly = { price = 0.5, stackPrice = 100, stack = 200, source = 'seed', isBasePrice = true }
-	t.same(
-		buyTexts(
-			build({ vendorBuy = seedOnly, vendorFullPrice = { stackPrice = 100, stack = 200 }, isShiftDown = true })
-		)[3],
-		'Full price × 200 | ' .. coins('1s'),
-		'a seed stack reads at its stack price'
-	)
-	local unknownStanding =
-		{ price = 40, stackPrice = 40, stack = 1, isBasePrice = false, cheapestVendor = { reaction = 99 } }
-	t.eq(find(build({ vendorBuy = unknownStanding, isShiftDown = true }), 'Standing'), nil, 'never a raw number')
+	t.same(buyTexts(build({ vendorBuy = fullRead }))[2], STORE_ICON .. ' Vendor (each) | ' .. coins('40c'))
+	t.same(buyTexts(build({ vendorBuy = fullRead, isDetail = true, options = VENDOR_ONLY })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c'),
+		'Sold by | Gina Lang',
+		'Standing | Neutral',
+		'Read | 2 h ago',
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	local seedOnly = {
+		price = 0.5,
+		stackPrice = 100,
+		stack = 200,
+		source = 'seed',
+		vendorCount = 0,
+		isLimited = false,
+		isBasePrice = true,
+	}
+	t.same(buyTexts(build({ vendorBuy = seedOnly, isDetail = true, options = VENDOR_ONLY })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor × 200 | ' .. coins('1s'),
+		'Auction house (each) | ' .. coins('90c'),
+	}, 'a seed price has no vendor, standing or read to show')
+	local unknownStanding = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		vendorCount = 1,
+		isLimited = false,
+		isBasePrice = false,
+		cheapestVendor = { npcId = 7, reaction = 99, priceFromBase = false },
+	}
+	t.eq(find(build({ vendorBuy = unknownStanding, isDetail = true }), 'Standing'), nil, 'never a raw number')
+end)
+
+t.test('a price kept from an earlier base read leaves the standing out', function()
+	local keptBase = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		vendorCount = 1,
+		isLimited = false,
+		isBasePrice = true,
+		ageSeconds = 600,
+		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 8, priceFromBase = true },
+	}
+	local lines = build({ vendorBuy = keptBase, isDetail = true, options = VENDOR_ONLY })
+	t.eq(find(lines, 'Standing'), nil, 'the latest read was Exalted, the price is not from it')
+	t.truthy(find(lines, 'Sold by | Gina Lang'))
+end)
+
+t.test('with the detail block the Buy vendor price and the vendor pays line stand apart', function()
+	local lines = build({
+		stackCount = 20,
+		vendorBuy = DISCOUNTED_READ,
+		isDetail = true,
+		options = { detailTrace = false, detailSales = false, detailListings = false, detailSellTime = false },
+	})
+	t.truthy(find(lines, STORE_ICON .. ' Vendor (each) | ' .. coins('40c')), 'what a vendor charges')
+	t.truthy(find(lines, 'Vendor pays × 20 | ' .. coins('2s 60c')), 'what a vendor pays, in the detail block')
+	t.truthy(find(build({ stackCount = 1, isDetail = true, options = { detailTrace = false } }), 'Vendor pays | '))
 end)
 
 t.test('without the icon atlas the discount reads as a word', function()
@@ -527,7 +573,7 @@ t.test('detail: the trace, reasons, sales, listings, vendor and sell time with i
 		'Sold a day | 45',
 		'Listed | × 60',
 		'Price levels | 2',
-		'Vendor × 20 | ' .. coins('2s 60c'),
+		'Vendor pays × 20 | ' .. coins('2s 60c'),
 		'Sell time | ~21 h', -- (20 listed under 98c + 20) / 45 a day
 		'  ' .. TooltipLines.SELL_TIME_NOTE,
 	})
@@ -1484,33 +1530,44 @@ t.test('a vendor price lookup that fails drops only the Vendor row', function()
 		BuyPrice = function()
 			error('vendor store broke')
 		end,
-		FullPrice = function()
-			return nil
-		end,
 	}
 	local lines = game:ShowItemTooltip(LINEN)
 	t.eq(lines[2].left, 'Auction house (each)')
 	t.eq(lines[4].left, HEADER_ICON, 'the Sell section still shows')
+	t.truthy(addon.Tooltip.vendorError:find('vendor store broke', 1, true), 'the first error is kept')
+	addon.vendorPrices.BuyPrice = function()
+		error('second failure')
+	end
+	game:ShowItemTooltip(LINEN)
+	t.eq(addon.Tooltip.vendorError:find('second failure', 1, true), nil, 'only the first')
+	t.same(game.printed, {}, 'never printed')
 	t.same(addon.errors, {})
 end)
 
-t.test('Shift shows the vendor details through the modifier redraw, and the seed full price', function()
+t.test('vendor details follow the detail block: the chosen modifier, Never and Always', function()
 	local game, addon = startWithTable()
 	addon.vendorPrices = {
 		BuyPrice = function()
 			return DISCOUNTED_READ
 		end,
-		FullPrice = function(_, itemId)
-			return itemId == LINEN and { stackPrice = 50, stack = 1 } or nil
-		end,
 	}
-	t.eq(game:ShowItemTooltip(LINEN)[3].left, 'Auction house (each)', 'no details without Shift')
+	local function hasDetails()
+		return find(game:ShowItemTooltip(LINEN), 'Sold by') ~= nil
+	end
+	t.eq(hasDetails(), false, 'no modifier held')
 	game.modifiers.shift = true
 	game:Fire('MODIFIER_STATE_CHANGED', 'LSHIFT', 1)
-	local lines = game.env.GameTooltip.lines
-	t.truthy(lines[3].left:find('Sold by', 1, true), 'the first detail row sits under the Vendor row')
-	t.eq(lines[3].right, 'Gina Lang')
-	t.truthy(find(lines, 'Full price (each)'), 'the seed full price')
+	t.truthy(find(game.env.GameTooltip.lines, 'Sold by'), 'Shift, the default modifier, through the redraw')
+	t.truthy(find(game.env.GameTooltip.lines, 'Vendor pays'), 'with the detail vendor line beside it')
+	addon.host.RunCommand('set tooltip.detailModifier ctrl')
+	t.eq(hasDetails(), false, 'Shift is not the chosen modifier now')
+	game.modifiers.shift, game.modifiers.ctrl = false, true
+	t.eq(hasDetails(), true, 'Ctrl opens them')
+	addon.host.RunCommand('set tooltip.detailMode off')
+	t.eq(hasDetails(), false, 'Never hides them, modifier or not')
+	game.modifiers.ctrl = false
+	addon.host.RunCommand('set tooltip.detailMode always')
+	t.eq(hasDetails(), true, 'Always shows them with no modifier, the gamepad path')
 	t.same(addon.errors, {})
 end)
 

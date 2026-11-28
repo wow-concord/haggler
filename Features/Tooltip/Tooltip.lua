@@ -3,8 +3,9 @@
 	a Buy section (what a vendor charges, from VendorPrices, and the lowest listing a unit) and a Sell section (the default rule's price a
 	unit and for the stack), each with its data age. The detail block shows always, on a
 	modifier, or never. A gamepad modifier works through the client's GamePadEmulateShift /
-	Ctrl / Alt mapping. Holding or letting go of a modifier redraws the tooltip at once; Shift also
-	opens the Vendor row's details. Over a
+	Ctrl / Alt mapping. Holding or letting go of a modifier redraws the tooltip at once; the detail
+	block also opens the Vendor row's details. Tooltip.vendorError keeps the first vendor price
+	lookup failure. Over a
 	bag slot the Sell section also names Haggler's decision for the item (Advice.forItem) as its
 	Signal, with the decision glyph, and for a Wait the reason under the prices. The line stands
 	on its own: it shows where the badge does not (its setting off, the client's junk coin in
@@ -13,8 +14,11 @@
 ]]
 local _, ns = ...
 
+local Tooltip = {}
+ns.Tooltip = Tooltip
+
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons, vendorPricesOf
+local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons, vendorBuyPrice
 -- The icon set the decision glyph comes from, made on first use.
 local icons
 
@@ -55,7 +59,7 @@ ns.host.AddModule({
 		toggle('detailTrace', 'Detail: how the default rule got its price'),
 		toggle('detailSales', 'Detail: units sold a day'),
 		toggle('detailListings', 'Detail: units and prices listed in the last scan'),
-		toggle('detailVendor', 'Detail: vendor price'),
+		toggle('detailVendor', 'Detail: vendor pays'),
 		toggle('detailSellTime', 'Detail: estimated sell time'),
 		toggle('sellTimeNote', 'Note under the sell time that it is an estimate from sales per day'),
 	},
@@ -81,7 +85,6 @@ function buildLines(module, itemId, info)
 		return {}
 	end
 	local modifiers = info.modifiers or {}
-	local vendorBuy, vendorFullPrice = vendorPricesOf(itemId)
 	return ns.TooltipLines.build({
 		quote = prices:Quote(itemId, ns.store:ShownRules('tooltip')),
 		stackCount = info.stackCount,
@@ -90,25 +93,23 @@ function buildLines(module, itemId, info)
 		theme = ns.theme,
 		advice = bagAdvice(itemId, info),
 		icons = tooltipIcons(),
-		vendorBuy = vendorBuy,
-		vendorFullPrice = vendorFullPrice,
-		isShiftDown = modifiers.shift == true,
+		vendorBuy = vendorBuyPrice(itemId),
 	})
 end
 
--- What a vendor charges and the seed's full price. ns.vendorPrices is nil while the Vendor prices
--- module is off; a lookup that fails drops only the Vendor row, never the tooltip.
-function vendorPricesOf(itemId)
+-- What a vendor charges. ns.vendorPrices is nil while the Vendor prices module is off; a lookup
+-- that fails drops only the Vendor row, and its first error is kept, never printed.
+function vendorBuyPrice(itemId)
 	local prices = ns.vendorPrices
 	if not prices then
-		return nil, nil
+		return nil
 	end
-	local isBuyOk, buy = pcall(prices.BuyPrice, prices, itemId)
-	if not isBuyOk then
-		return nil, nil
+	local isOk, result = pcall(prices.BuyPrice, prices, itemId)
+	if not isOk then
+		Tooltip.vendorError = Tooltip.vendorError or tostring(result)
+		return nil
 	end
-	local isFullOk, full = pcall(prices.FullPrice, prices, itemId)
-	return buy, isFullOk and full or nil
+	return result
 end
 
 -- Advice.forItem's BagAdvice for the bag slot under the tooltip; nil elsewhere.

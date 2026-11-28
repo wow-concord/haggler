@@ -237,10 +237,11 @@ function refreshLegacyPanel(panel)
 	end
 end
 
--- A switch names its module in brackets after it, unless the label already names it. Labels
--- carry no brackets of their own, so the two never stack.
+-- A switch names its module in brackets after it, unless the label already names it as a whole
+-- word. Labels carry no brackets of their own, so the two never stack.
 function switchLabel(label, moduleName)
-	if label:lower():find(moduleName:lower(), 1, true) then
+	local pattern = '%f[%w]' .. moduleName:lower():gsub('%p', '%%%0') .. '%f[%W]'
+	if label:lower():find(pattern) then
 		return label
 	end
 	return label .. ' (' .. moduleName .. ')'
