@@ -126,6 +126,8 @@ t.test('junk from saved scans and the client is unknown, never an error', functi
 	t.eq(facts.maxStack, nil)
 	t.eq(facts.lowestListed, 95, 'the AHledger lowest stands in for a junk scan minimum')
 	t.eq(facts.salesPerDay, 45)
+	t.eq(facts.typicalPrice, 125, 'the 30-day median')
+	t.eq(facts.recentPrice, 118, 'the 7-day median')
 end)
 
 t.test('a throwing source reads as no data for display and as bad input for a price', function()
@@ -161,6 +163,8 @@ t.test('facts give ages and depth from the sources', function()
 		levels = snapshot.items[LINEN].levels,
 		levelCount = 2,
 		lowestListed = 90,
+		typicalPrice = 125,
+		recentPrice = 118,
 		scanAge = 120,
 		rowAge = 3 * 3600,
 	})

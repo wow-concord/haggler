@@ -131,7 +131,7 @@ function registerLegacyPanel(entries)
 	local ui = ns.Widgets.new(wow, ns.theme)
 	local panel = wow:CreateFrame('Frame', nil, nil, PANEL_NAME)
 	panel.name = Options.CATEGORY_NAME
-	local title = ui:Text(panel, 17, 'color.text.title')
+	local title = ui:Text(panel, 17, 'color.text.title', ns.Widgets.HEADING_FACE)
 	title:SetPoint('TOPLEFT', panel, 'TOPLEFT', PADDING, -PADDING)
 	title:SetText(Options.CATEGORY_NAME)
 	local openButton = ui:Button(panel, 'Open Haggler', 'primary')

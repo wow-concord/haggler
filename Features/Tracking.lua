@@ -488,10 +488,7 @@ function marketNow()
 end
 
 function charKey(player)
-	if type(player) ~= 'table' or type(player.name) ~= 'string' or type(player.realm) ~= 'string' then
-		return nil
-	end
-	return player.name .. '-' .. player.realm
+	return ns.store and ns.store:CharacterKey(player) or nil
 end
 
 -- An invoice names the item, not its id: a tracked auction of that name first (the player's own

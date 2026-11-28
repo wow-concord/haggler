@@ -35,10 +35,12 @@ local CHAT_PREFIX = '|cffd4a017Haggler|r: '
 local DEFAULT_EVENT_OWNER = 'main'
 local MODIFIER_CHECKS = { shift = 'IsShiftKeyDown', ctrl = 'IsControlKeyDown', alt = 'IsAltKeyDown' }
 local ITEM_TOOLTIP_NAMES = { 'GameTooltip', 'ItemRefTooltip', 'ShoppingTooltip1', 'ShoppingTooltip2' }
+-- Enum.ItemClass.Questitem, for a client without the enum.
+local QUEST_ITEM_CLASS = 12
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local dispatchEvent, itemIdFromLink, itemIdFromTooltip, stackCountFromOwner, timeLeftBand, isSecret
-local isInCombat, isBnetFriendGuid
+local isInCombat, isBnetFriendGuid, serverIdFromGuid
 
 local WowMethods = {}
 WowMethods.__index = WowMethods
@@ -102,17 +104,23 @@ function WowMethods:CachedItemInfo(itemId)
 	return self:ItemInfo(itemId)
 end
 
---- The player's realm, faction and region, as the market key needs them.
---- @return table { name, realm, faction, region }
+--- The player's name, realm, faction and region, as the market and character keys need them.
+--- realm is the client's name for it, '' when the client gives none (Forever build 71037 on);
+--- server is the server number in the player's GUID, nil before the client knows the character.
+--- Store:ResolveRealm and Store:CharacterKey make up for a missing realm name.
+--- @return table { name, realm, faction, region, server }
 function WowMethods:Player()
 	local env = self.env
+	local name = env.UnitName('player')
 	return {
-		name = env.UnitName('player'),
+		-- Until the client knows the character it answers UNKNOWNOBJECT ("Unknown").
+		name = name ~= env.UNKNOWNOBJECT and name or nil,
 		-- GetRealmName keeps the spaces the ruleset words need ("Wild Growth RP PvP"); the
 		-- normalized name drops them, as AHledger's realm parsing does not.
 		realm = env.GetRealmName(),
 		faction = env.UnitFactionGroup('player'),
 		region = REGION_SLUGS[env.GetCurrentRegion and env.GetCurrentRegion() or 1] or 'us',
+		server = serverIdFromGuid(env.UnitGUID and env.UnitGUID('player') or nil),
 	}
 end
 
@@ -124,6 +132,20 @@ end
 --- @return any
 function WowMethods:AHledgerAPI()
 	return self.env.AHledgerAPI
+end
+
+--- The market AHledger prices for this character (AHledgerAPI.GetMarket), or nil. AHledger reads
+--- the realm in ways Haggler cannot (its own memory, /ahl realm), so it knows the ruleset when the
+--- client gives no realm name. It is also the market pinned in AHledger's options, which is one
+--- setting for the whole account; callers check its faction and region.
+--- @return string|nil
+function WowMethods:AHledgerMarket()
+	local api = self.env.AHledgerAPI
+	if type(api) ~= 'table' or type(api.GetMarket) ~= 'function' then
+		return nil
+	end
+	local ok, market = pcall(api.GetMarket)
+	return ok and type(market) == 'string' and market or nil
 end
 
 --- AHledger's own settings table (AHledgerDB.settings) for reading only; nil when AHledger has
@@ -390,8 +412,9 @@ function WowMethods:InstallTooltipHook()
 	return isHooked and 'script' or nil
 end
 
---- Finds the item and stack of a built tooltip and runs every handler on it. Secret values
---- (issecretvalue, on clients that have it) are never read.
+--- Finds the item and stack of a built tooltip and runs every handler on it as
+--- handler(tooltip, itemId, stackCount, location?); location = { bag, slot } when the tooltip
+--- belongs to a bag slot holding the item. Secret values (issecretvalue) are never read.
 function WowMethods:HandleItemTooltip(tooltip, data)
 	if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then
 		return
@@ -401,9 +424,9 @@ function WowMethods:HandleItemTooltip(tooltip, data)
 	if not itemId then
 		return
 	end
-	local stackCount = stackCountFromOwner(env, tooltip, itemId)
+	local stackCount, location = stackCountFromOwner(env, tooltip, itemId)
 	for handlerOwner, handler in pairs(self.tooltipHandlers) do
-		local ok, err = pcall(handler, tooltip, itemId, stackCount)
+		local ok, err = pcall(handler, tooltip, itemId, stackCount, location)
 		if not ok and self.onError then
 			self.onError('tooltip ' .. handlerOwner, err)
 		end
@@ -558,6 +581,36 @@ function WowMethods:ContainerItem(bag, slot)
 		quality = info.quality,
 		hasNoValue = info.hasNoValue == true,
 	}
+end
+
+--- True when a bag slot holds a quest item: the client's quest info for the slot (the call
+--- Forever's ContainerFrame uses for its quest border), else the item's class.
+--- @return boolean
+function WowMethods:IsQuestSlot(bag, slot, itemId)
+	local container = self.env.C_Container
+	local getQuestInfo = container and container.GetContainerItemQuestInfo
+	if getQuestInfo then
+		local ok, questInfo = pcall(getQuestInfo, bag, slot)
+		if ok and type(questInfo) == 'table' then
+			return questInfo.isQuestItem == true or type(questInfo.questID) == 'number'
+		end
+	end
+	return self:IsQuestItemClass(itemId)
+end
+
+--- True when an item's class is Quest (Enum.ItemClass.Questitem, 12), from the instant item
+--- info that needs no cache.
+--- @return boolean
+function WowMethods:IsQuestItemClass(itemId)
+	local env = self.env
+	local getInstant = (env.C_Item and env.C_Item.GetItemInfoInstant) or env.GetItemInfoInstant
+	if type(itemId) ~= 'number' or not getInstant then
+		return false
+	end
+	local ok, _, _, _, _, _, classId = pcall(getInstant, itemId)
+	local itemClass = env.Enum and env.Enum.ItemClass
+	local questClass = itemClass and itemClass.Questitem or QUEST_ITEM_CLASS
+	return ok and classId == questClass
 end
 
 --- Slots in a bag (0 when the bag is empty or unknown).
@@ -958,8 +1011,9 @@ function itemIdFromTooltip(env, tooltip, data)
 end
 
 -- How many units the hovered stack holds: from the bag slot the tooltip is anchored to, when
--- that slot holds the same item, else 1. Reads only (GetBagID / GetID / container info), never
--- calls the owner's scripts. The item check guards against an owner whose ids are not a bag slot.
+-- that slot holds the same item (and then the slot, { bag, slot }), else 1. Reads only
+-- (GetBagID / GetID / container info), never calls the owner's scripts. The item check guards
+-- against an owner whose ids are not a bag slot.
 function stackCountFromOwner(env, tooltip, itemId)
 	local owner = tooltip.GetOwner and tooltip:GetOwner()
 	if type(owner) ~= 'table' then
@@ -977,8 +1031,12 @@ function stackCountFromOwner(env, tooltip, itemId)
 	end
 	local ok, info = pcall(container.GetContainerItemInfo, bag, slot)
 	local isSameItem = ok and type(info) == 'table' and not isSecret(env, info.itemID) and info.itemID == itemId
-	local count = isSameItem and info.stackCount
-	return type(count) == 'number' and not isSecret(env, count) and count >= 1 and count or 1
+	if not isSameItem then
+		return 1
+	end
+	local count = info.stackCount
+	count = type(count) == 'number' and not isSecret(env, count) and count >= 1 and count or 1
+	return count, { bag = bag, slot = slot }
 end
 
 -- The client's time-left value as the internal band, 1 (short) to 4 (very long). Forever's
@@ -1024,6 +1082,12 @@ function isBnetFriendGuid(env, guid)
 		end
 	end
 	return false
+end
+
+-- The server number in a player GUID ("Player-6928-00A1AEB0" -> 6928), or nil.
+function serverIdFromGuid(guid)
+	local id = type(guid) == 'string' and tonumber(guid:match('^Player%-(%d+)%-')) or nil
+	return id and id > 0 and id or nil
 end
 
 return Wow

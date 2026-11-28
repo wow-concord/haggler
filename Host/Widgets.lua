@@ -8,7 +8,8 @@
 	  Widgets.new(wow, theme) -> ui
 	  ui:Fill(frame, token)            a texture covering the frame
 	  ui:Border(frame, token, width?)  a border inside the frame, 1px unless width is given
-	  ui:Text(parent, size, token)     a font string (FRIZQT; numbers use the same face)
+	  ui:Text(parent, size, token, face?)  a font string in the theme's face token (default
+	      font.face.body; headings pass font.face.heading or window.titleFace)
 	  ui:Button(parent, label, style)  style 'primary'|'secondary'|'tab'|'ghost'
 	      button:SetLabel(text) · button:SetEnabled(isEnabled) · button:OnClick(fn)
 	      button:SetSelected(isSelected) (tabs: the accent underline)
@@ -31,7 +32,9 @@ local _, ns = ...
 local Widgets = {}
 ns.Widgets = Widgets
 
-Widgets.FONT = 'Fonts\\FRIZQT__.TTF'
+Widgets.BODY_FACE = 'font.face.body'
+Widgets.HEADING_FACE = 'font.face.heading'
+Widgets.TITLE_FACE = 'window.titleFace'
 Widgets.BUTTON_HEIGHT = 32
 Widgets.STEPPER_HEIGHT = 32
 Widgets.DISABLED_ALPHA = 0.6
@@ -43,7 +46,7 @@ local LEVEL_COLORS = { low = 'color.state.danger', medium = 'color.state.warning
 local BUTTON_STYLES = {
 	primary = { bg = 'color.accent.base', hover = 'color.accent.hover', fg = 'color.text.onAccent' },
 	secondary = { bg = 'color.surface.raised', hover = 'color.surface.overlay', fg = 'color.text.primary' },
-	tab = { bg = 'color.surface.base', hover = 'color.surface.raised', fg = 'color.text.secondary' },
+	tab = { bg = 'color.surface.base', hover = 'color.surface.raised', fg = 'color.text.secondary', face = 'tabs.face' },
 	ghost = { bg = 'color.surface.sunken', hover = 'color.surface.overlay', fg = 'color.text.secondary' },
 }
 
@@ -90,10 +93,10 @@ function WidgetsMethods:Border(frame, token, width)
 	return edges
 end
 
-function WidgetsMethods:Text(parent, size, token)
+function WidgetsMethods:Text(parent, size, token, face)
 	local text = parent:CreateFontString(nil, 'OVERLAY', 'GameFontHighlight')
 	if text.SetFont then
-		text:SetFont(Widgets.FONT, size or 14, '')
+		text:SetFont(self.theme:Face(face or Widgets.BODY_FACE), size or 14, '')
 	end
 	if text.SetJustifyH then
 		text:SetJustifyH('LEFT')
@@ -109,7 +112,7 @@ function WidgetsMethods:Button(parent, label, style)
 	button:SetHeight(Widgets.BUTTON_HEIGHT)
 	button.palette = palette
 	button.background = self:Fill(button, palette.bg)
-	button.label = self:Text(button, 14, palette.fg)
+	button.label = self:Text(button, 14, palette.fg, palette.face)
 	button.label:SetPoint('CENTER', button, 'CENTER')
 	button.isEnabled = true
 	-- A width the caller sets is the button's least width; a label may widen it, never shrink it

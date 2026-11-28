@@ -544,6 +544,15 @@ end)
 
 t.group('confidence')
 
+local function reasonText(price, code)
+	for _, reason in ipairs(price.confidence.reasons) do
+		if reason.code == code then
+			return reason.text
+		end
+	end
+	return nil
+end
+
 local function reasonLevel(price, code)
 	for _, reason in ipairs(price.confidence.reasons) do
 		if reason.code == code then
@@ -612,11 +621,13 @@ t.test('the AHledger fallback base lowers confidence', function()
 	local price = evaluate(LOWEST, healthy({ levels = false }))
 	t.eq(price.source, 'ahledger')
 	t.eq(reasonLevel(price, 'fallbackBase'), 'medium')
+	t.eq(reasonText(price, 'fallbackBase'), "no scan depth, so this is AHledger's lowest buyout and not bait-checked")
 end)
 
 t.test('an inferred price step lowers confidence', function()
 	local price = evaluate(rule({ kind = 'median' }), healthy({ info = {} }))
 	t.eq(reasonLevel(price, 'inferredStep'), 'medium')
+	t.eq(reasonText(price, 'inferredStep'), 'max stack unknown, so whole silver is assumed')
 	local copperSeen = evaluate(LOWEST, healthy({ info = {}, levels = { { price = 301, qty = 200 } } }))
 	t.eq(reasonLevel(copperSeen, 'inferredStep'), nil, 'copper in the scan settles the step')
 end)

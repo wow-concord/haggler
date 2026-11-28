@@ -291,6 +291,221 @@ t.test('manual mode waits for /hag', function()
 	t.truthy(addon.window.returnButton:IsShown())
 end)
 
+-- Remembered view ---------------------------------------------------------------------------
+
+t.group('remembered auction house view')
+
+-- A /reload, logout or restart: a new game and add-on over the same saved variables.
+local function reload(previous)
+	local game = FakeGame.new({ now = NOW, itemInfo = ITEM_INFO })
+	game.env.AHledgerAPI = FakeGame.newAHledgerAPI({ market = MARKET, updated = NOW - 3600, rows = AHLEDGER_ROWS })
+	game.env.GetRealmName = function()
+		return 'Realm'
+	end
+	game.bagSlots[0] = 16
+	game.savedDb, game.savedCharDb = previous.savedDb, previous.savedCharDb
+	return game, FakeGame.startAddon(t, game)
+end
+
+local function isShowingBlizzard(game, addon)
+	return not addon.window:IsOpen()
+		and game.env.AuctionHouseFrame:GetAlpha() == 1
+		and addon.window.returnButton:IsShown()
+end
+
+t.test('model: the remembered view opens Haggler only where the mode lets it open itself', function()
+	t.eq(WindowModel.opensAtAuctionHouse('takeover', 'haggler'), true)
+	t.eq(WindowModel.opensAtAuctionHouse('dock', 'haggler'), true)
+	t.eq(WindowModel.opensAtAuctionHouse('takeover', 'blizzard'), false)
+	t.eq(WindowModel.opensAtAuctionHouse('dock', 'blizzard'), false)
+	t.eq(WindowModel.opensAtAuctionHouse('manual', 'haggler'), false)
+	t.eq(WindowModel.opensAtAuctionHouse('takeover', nil), true, 'nothing saved: the default')
+end)
+
+t.test("the first-ever open keeps today's default: Haggler takes over", function()
+	local game, addon = start()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler')
+	openAuctionHouse(game)
+	t.truthy(addon.window:IsOpen())
+	t.eq(addon.window.placedAs, 'takeover')
+	t.eq(game.env.AuctionHouseFrame:GetAlpha(), 0)
+	t.same(addon.errors, {})
+end)
+
+t.test("switching to Blizzard's window is remembered for the next visit", function()
+	local game, addon = start()
+	openAuctionHouse(game)
+	addon.window.blizzardButton:Click()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'blizzard')
+	closeAuctionHouse(game)
+	openAuctionHouse(game)
+	t.truthy(isShowingBlizzard(game, addon), "Blizzard's window, with the Haggler button")
+	t.same(addon.errors, {})
+end)
+
+t.test('the close button is not a switch, like Escape', function()
+	local game, addon = start()
+	openAuctionHouse(game)
+	addon.window.closeButton:Click()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler')
+	closeAuctionHouse(game)
+	openAuctionHouse(game)
+	t.truthy(addon.window:IsOpen(), 'the next visit opens Haggler again')
+end)
+
+t.test('a plain /hag at the auction house switches either way', function()
+	local game, addon = start()
+	openAuctionHouse(game)
+	addon.window:Toggle()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'blizzard')
+	addon.window:Toggle()
+	t.truthy(addon.window:IsOpen())
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler')
+end)
+
+t.test("any explicit open of Haggler's window at the auction house chooses Haggler", function()
+	local game, addon = start()
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	openAuctionHouse(game)
+	addon.host.RunCommand('open sell')
+	t.truthy(addon.window:IsOpen())
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler', '/hag open')
+	addon.window.blizzardButton:Click()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'blizzard')
+	-- The top bar, the options entry and the crafting window all open it this way.
+	addon.window:Open('ventures')
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler', 'an open from another feature')
+	t.same(addon.errors, {})
+end)
+
+t.test('an open that fails saves nothing', function()
+	local game, addon = start()
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	openAuctionHouse(game)
+	local createFrame = addon.wow.CreateFrame
+	addon.wow.CreateFrame = function(wow, frameType, parent, template, name, ...)
+		if name == 'HagglerFrame' then
+			error('frame build failed')
+		end
+		return createFrame(wow, frameType, parent, template, name, ...)
+	end
+	t.raises(function()
+		addon.window.returnButton:Click()
+	end, 'frame build failed')
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'blizzard')
+end)
+
+t.test('with Blizzard remembered, an auction house window that loads late still gets the Haggler button', function()
+	local game, addon = start()
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	local blizzard = game.env.AuctionHouseFrame
+	game.env.AuctionHouseFrame = nil
+	game:Fire('AUCTION_HOUSE_SHOW')
+	t.eq(addon.window.returnButton, nil, 'no window to sit on yet')
+	game.env.AuctionHouseFrame = blizzard
+	game:RunTimers()
+	blizzard:Show()
+	t.truthy(addon.window.returnButton, 'made once the window exists')
+	t.truthy(isShowingBlizzard(game, addon))
+	t.same(addon.errors, {})
+end)
+
+t.test('with Blizzard remembered, the OnShow hook makes the Haggler button', function()
+	local game, addon = start()
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	openAuctionHouse(game)
+	closeAuctionHouse(game)
+	-- The hook is in place from the first visit; next time the window exists only on show.
+	local blizzard = game.env.AuctionHouseFrame
+	addon.window.returnButton = nil
+	game.env.AuctionHouseFrame = nil
+	game:Fire('AUCTION_HOUSE_SHOW')
+	game.env.AuctionHouseFrame = blizzard
+	blizzard:Show()
+	t.truthy(addon.window.returnButton, 'made by the hook')
+	t.truthy(addon.window.returnButton:IsShown())
+	t.same(addon.errors, {})
+end)
+
+t.test('the settings row reads as the remembered window, with its note, hidden in manual mode', function()
+	local _, addon = start()
+	local lines = table.concat(addon.host.RunCommand('list window'), '\n')
+	t.truthy(lines:find('window.ahView = haggler  (Auction house opens in)', 1, true), lines)
+	t.truthy(lines:find('the last one you switched to', 1, true), lines)
+	addon.host.Settings:Set('window', 'ahMode', 'manual')
+	lines = table.concat(addon.host.RunCommand('list window'), '\n')
+	t.eq(lines:find('ahView', 1, true), nil, 'nothing remembered in manual mode')
+	t.truthy(lines:find('ahMode', 1, true))
+end)
+
+t.test('switching back to Haggler is remembered for the next visit', function()
+	local game, addon = start()
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	openAuctionHouse(game)
+	t.truthy(isShowingBlizzard(game, addon))
+	addon.window.returnButton:Click()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler')
+	closeAuctionHouse(game)
+	openAuctionHouse(game)
+	t.truthy(addon.window:IsOpen())
+	t.eq(game.env.AuctionHouseFrame:GetAlpha(), 0)
+	t.same(addon.errors, {})
+end)
+
+t.test('closing the auction house or opening /hag away remembers nothing', function()
+	local game, addon = start()
+	openAuctionHouse(game)
+	closeAuctionHouse(game)
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler')
+	addon.host.Settings:Set('window', 'ahView', 'blizzard')
+	addon.window:Open()
+	addon.window:Close()
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'blizzard', 'away from the auction house')
+end)
+
+t.test('the remembered view survives a reload of the saved variables', function()
+	local game, addon = start()
+	openAuctionHouse(game)
+	addon.window.blizzardButton:Click()
+	closeAuctionHouse(game)
+	local reloadedGame, reloadedAddon = reload(game)
+	openAuctionHouse(reloadedGame)
+	t.truthy(isShowingBlizzard(reloadedGame, reloadedAddon))
+	reloadedAddon.window.returnButton:Click()
+	closeAuctionHouse(reloadedGame)
+	local thirdGame, thirdAddon = reload(reloadedGame)
+	openAuctionHouse(thirdGame)
+	t.truthy(thirdAddon.window:IsOpen(), 'Haggler again after the next reload')
+	t.same(thirdAddon.errors, {})
+end)
+
+t.test('in combat Haggler still opens: it makes no secure frames', function()
+	local game, addon = start()
+	game.inCombat = true
+	openAuctionHouse(game)
+	t.truthy(addon.window:IsOpen())
+	t.eq(game.env.AuctionHouseFrame:GetAlpha(), 0)
+	t.same(addon.errors, {})
+end)
+
+t.test("a window that fails to build falls back to the game's and keeps the choice", function()
+	local game, addon = start()
+	local createFrame = addon.wow.CreateFrame
+	addon.wow.CreateFrame = function(wow, frameType, parent, template, name, ...)
+		if name == 'HagglerFrame' then
+			error('frame build failed')
+		end
+		return createFrame(wow, frameType, parent, template, name, ...)
+	end
+	openAuctionHouse(game)
+	t.truthy(isShowingBlizzard(game, addon))
+	t.eq(addon.host.Settings:Get('window', 'ahView'), 'haggler', 'not overwritten')
+	t.eq(#addon.errors, 1, 'the failure is reported')
+	t.truthy(addon.errors[1]:find('frame build failed', 1, true))
+end)
+
+t.group('window')
+
 t.test('switching the window off closes it and restores Blizzard', function()
 	local game, addon = start()
 	openAuctionHouse(game)
@@ -920,6 +1135,16 @@ t.test('a button shrinks to a shorter label but not under a set width', function
 	button:SetWidth(200)
 	button:SetLabel('X')
 	t.eq(button:GetWidth(), 200)
+end)
+
+t.test('the window title and a detail title read the heading face; body text does not', function()
+	local game, addon = start()
+	carry(game, 1, LINEN, 20)
+	addon.host.RunCommand('open sell')
+	local heading = addon.theme:Face('font.face.heading')
+	t.eq(addon.window.titleText.font[1], addon.theme:Face('window.titleFace'))
+	t.eq(container(addon, 'sell').title.font[1], heading)
+	t.truthy(addon.window.modeText.font[1] ~= heading, 'the mode line is body text')
 end)
 
 t.group('rules review')

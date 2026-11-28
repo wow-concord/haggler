@@ -328,7 +328,10 @@ t.test('below the coverage threshold sales a day is AHledger, with a reason', fu
 	t.eq(view.source, 'ahledger')
 	t.eq(view.perDay, 45)
 	t.same(codesOf(view.reasons), { 'ownSalesThin:high' })
-	t.truthy(view.reasons[1].text:find('5 of 6 scans, 30 of 12 hours', 1, true), view.reasons[1].text)
+	t.truthy(
+		view.reasons[1].text == 'sold a day from AHledger, as your own count has 5 of 6 scans and 30 of 12 hours',
+		view.reasons[1].text
+	)
 	t.eq(Sales.choose(stats(10, 0, 6, 11.9), 45, { minScans = 6, minHours = 12 }).source, 'ahledger')
 end)
 
@@ -378,6 +381,12 @@ t.test('the flag is raised while AHledger figures are in use', function()
 	t.eq(view.reasons[2].text, 'sales may include troll buys (40% of vanished units)')
 end)
 
+t.test('on own scans the flag says the troll buys are left out, in one plain sentence', function()
+	local view = Sales.choose(stats(49, 51, 9, 24), nil, { minScans = 1, minHours = 1 })
+	t.eq(view.source, 'own')
+	t.eq(view.reasons[1].text, '51% of vanished units were troll buys and are left out')
+end)
+
 t.group('sales in rules')
 
 local RULE = { id = 'r', name = 'R', base = { kind = 'median' }, steps = {} }
@@ -417,7 +426,7 @@ end)
 t.test('a broken sales view is bad input; a throwing one too', function()
 	local price = Rules.evaluate(RULE, LINEN, ctxWithSales({ perDay = 'x', source = 'own', reasons = { 'junk' } }))
 	t.same(codesOf(price.confidence.reasons), { 'fewSales:medium', 'badInput:medium' })
-	t.eq(price.confidence.reasons[2].text, 'own sales a day was not usable; treated as unknown')
+	t.eq(price.confidence.reasons[2].text, 'own sales a day was not usable and is treated as unknown')
 	local ctx = ctxWithSales(nil)
 	ctx.sales = function()
 		error('broken')

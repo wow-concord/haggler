@@ -4,8 +4,12 @@
 
 	  Haggler: value          bottom left    the item's value, when the Bags value setting is on;
 	                                         a guessed value carries the low marker in its text
-	  Haggler: vendor it      top left       the vendor badge
-	  Haggler: low confidence top right      the alert-triangle
+	  Haggler: decision       top left       post, sell, wait or undecided
+	  Haggler: item type      top right      quest or junk
+
+	A badge widget is a frame of Haggler's own holding the glyph and its outline, so hiding the
+	widget hides both. Quest comes from the item class and junk from the quality Baganator gives
+	(a grey the vendor pays for): Baganator's details carry no bag slot to ask.
 
 	A widget's onUpdate answers true (show), false (hide) or nil (item data not ready; Baganator
 	asks again). The total is a frame of Haggler's own placed with RegisterRegion in the
@@ -22,18 +26,18 @@ local WIDGETS = {
 		region = 'text',
 	},
 	{
-		label = 'Haggler: vendor it',
-		id = 'haggler_vendor',
+		label = 'Haggler: decision',
+		id = 'haggler_decision',
 		corner = 'top_left',
-		region = 'icon',
-		badge = 'vendor',
+		region = 'badge',
+		slot = 'decision',
 	},
 	{
-		label = 'Haggler: low confidence',
-		id = 'haggler_low',
+		label = 'Haggler: item type',
+		id = 'haggler_type',
 		corner = 'top_right',
-		region = 'icon',
-		badge = 'lowConfidence',
+		region = 'badge',
+		slot = 'type',
 	},
 }
 -- Baganator appends a widget whose priority is past the corner's list and inserts it at that
@@ -54,7 +58,7 @@ local Baganator = ns.BagHosts.register({
 	attach = function(wow, view)
 		local api = apiOf(wow)
 		for _, widget in ipairs(WIDGETS) do
-			registerWidget(api, widget, view)
+			registerWidget(wow, api, widget, view)
 		end
 		registerTotal(wow, api, view)
 		return true
@@ -77,20 +81,17 @@ function Baganator.update(widget, region, details, view)
 	if type(itemId) ~= 'number' then
 		return nil
 	end
-	local decision = view:DecideItem(itemId, details.itemCount, details.isBound == true)
 	if widget.region == 'text' then
+		local decision = view:DecideItem(itemId, details.itemCount, { isBound = details.isBound == true })
 		if not decision.valueText then
 			return false
 		end
 		region:SetText(view:ValueLabel(decision))
 		return true
 	end
-	local badge = findBadge(decision, widget.badge)
-	if not badge then
-		return false
-	end
-	view:ApplyIcon(region, badge)
-	return true
+	local item = view:ItemFlags(itemId, details.quality, details.isBound == true)
+	local decision = view:DecideItem(itemId, details.itemCount, item)
+	return view:PaintBadgeFrame(region, findBadge(decision, widget.slot))
 end
 
 -- Helpers ---------------------------------------------------------------------------------
@@ -104,16 +105,14 @@ function apiOf(wow)
 	return api
 end
 
-function registerWidget(api, widget, view)
+function registerWidget(wow, api, widget, view)
 	api.RegisterCornerWidget(widget.label, widget.id, function(region, details)
 		return Baganator.update(widget, region, details, view)
 	end, function(itemButton)
 		if widget.region == 'text' then
 			return itemButton:CreateFontString(nil, 'OVERLAY', ns.Badges.VALUE_FONT)
 		end
-		local texture = itemButton:CreateTexture(nil, 'OVERLAY')
-		texture:SetSize(ns.Badges.ICON_SIZE, ns.Badges.ICON_SIZE)
-		return texture
+		return view:NewBadgeFrame(wow:CreateFrame('Frame', itemButton))
 	end, { corner = widget.corner, priority = WIDGET_PRIORITY }, false)
 end
 
@@ -134,9 +133,9 @@ function registerTotal(wow, api, view)
 	api.RegisterRegion('Haggler: bag value', REGION_ID, 'backpack', 'bottom_left', frame)
 end
 
-function findBadge(decision, kind)
+function findBadge(decision, slot)
 	for _, badge in ipairs(decision.badges) do
-		if badge.kind == kind then
+		if badge.slot == slot then
 			return badge
 		end
 	end

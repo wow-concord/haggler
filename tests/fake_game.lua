@@ -4,6 +4,21 @@
 -- and its partner.
 local FakeGame = {}
 
+-- The client's coin textures as Haggler writes money (TooltipLines.money).
+FakeGame.COIN_ICONS = {
+	g = '|TInterface\\MoneyFrame\\UI-GoldIcon:0:0:2:0|t',
+	s = '|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t',
+	c = '|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t',
+}
+
+--- Money as Haggler writes it, from the short letters: '18s 80c' reads 18 and the silver coin,
+--- 80 and the copper coin. Keeps a spec's expected text readable.
+function FakeGame.coins(text)
+	return (text:gsub('(%d+)([gsc])', function(amount, unit)
+		return amount .. FakeGame.COIN_ICONS[unit]
+	end))
+end
+
 -- Helpers live further down; declared here so they stay local.
 local addAuctionHouseActions, addTrackingApi
 
@@ -153,9 +168,18 @@ function FakeGame.newWidget(kind, parent, template)
 		end
 		return widget
 	end
-	function widget:CreateTexture(_, layer)
+	function widget:CreateTexture(_, layer, _, sublevel)
 		local texture = FakeGame.newWidget('Texture', self)
-		texture.layer = layer
+		texture.layer, texture.sublevel = layer, sublevel
+		-- Pixel snapping as the modern client has it; a test sets hasPixelSnapping = false without it.
+		if self.hasPixelSnapping ~= false then
+			function texture:SetSnapToPixelGrid(isSnapped)
+				self.isSnappedToPixelGrid = isSnapped
+			end
+			function texture:SetTexelSnappingBias(bias)
+				self.texelSnappingBias = bias
+			end
+		end
 		self.children[#self.children + 1] = texture
 		return texture
 	end
@@ -288,27 +312,166 @@ local function newFrame(unknownEvents)
 	return frame
 end
 
+-- A line's font string, as the client names it (<tooltip>TextLeft<n> / TextRight<n>) and
+-- reuses it from one build to the next. Its text is the line's left or right, so a test reads
+-- both the same way; a right font string shows only on a double line, as in the client.
+local LINE_HEIGHT = 12
+
+local function lineFontString(game, tooltip, index, side)
+	local globalName = tooltip.name .. 'Text' .. (side == 'right' and 'Right' or 'Left') .. index
+	local fontString = game.env[globalName]
+	if fontString then
+		return fontString
+	end
+	local key = side == 'right' and 'right' or 'left'
+	fontString = { index = index, left = tooltip.left + 10 }
+	-- The client can return nil for a line set to ''; a test sets tooltip.isEmptyTextNil for that.
+	function fontString:GetText()
+		local line = tooltip.lines[self.index]
+		local text = line and line[key]
+		if text == '' and tooltip.isEmptyTextNil then
+			return nil
+		end
+		return text
+	end
+	function fontString:SetText(text)
+		local line = tooltip.lines[self.index]
+		if line then
+			line[key] = text
+		end
+	end
+	function fontString:IsShown()
+		local line = tooltip.lines[self.index]
+		return line ~= nil and (key == 'left' or line.right ~= nil)
+	end
+	function fontString:GetLeft()
+		return self.left
+	end
+	function fontString:GetHeight()
+		return LINE_HEIGHT
+	end
+	-- Like the client, a line keeps the font last set on it until someone sets another: clearing
+	-- or reusing the line does not reset it. Line 1 starts on the header font, as the template
+	-- sets it (textLeft1Font).
+	fontString.fontObject = index == 1 and game.env.GameTooltipHeaderText or game.env.GameTooltipText
+	fontString.textColor = { 1, 1, 1, 1 }
+	-- Like the client, SetFontObject also takes the font object's colour and drops a SetFont.
+	function fontString:SetFontObject(fontObject)
+		self.fontObject, self.font = fontObject, nil
+		local color = fontObject and fontObject.color or { 1, 1, 1 }
+		self.textColor = { color[1], color[2], color[3], 1 }
+	end
+	function fontString:GetFontObject()
+		return self.fontObject
+	end
+	-- A skin may SetFont a line directly; GetFontObject still names the object it had, if any.
+	function fontString:SetFont(path, size, flags)
+		self.font = { path, size, flags or '' }
+		return true
+	end
+	function fontString:GetFont()
+		if self.font then
+			return self.font[1], self.font[2], self.font[3]
+		end
+		local object = self.fontObject
+		if object then
+			return object.path, object.size, object.flags or ''
+		end
+	end
+	function fontString:SetTextColor(r, g, b, a)
+		self.textColor = { r, g, b, a or 1 }
+	end
+	function fontString:GetTextColor()
+		return unpack(self.textColor)
+	end
+	game.env[globalName] = fontString
+	return fontString
+end
+
 local function newTooltip(game, name)
-	local tooltip = { name = name, lines = {}, shownCount = 0, isShown = true, scripts = {} }
+	local tooltip = {
+		name = name,
+		lines = {},
+		shownCount = 0,
+		isShown = true,
+		scripts = {},
+		children = {},
+		left = 100,
+		width = 240,
+		scriptNames = { OnTooltipSetItem = true, OnTooltipCleared = true, OnShow = true, OnHide = true },
+	}
+	-- Like the client, adding a line sets its font strings' colours (white when none is given).
+	local function addLine(line)
+		tooltip.lines[#tooltip.lines + 1] = line
+		local left = lineFontString(game, tooltip, #tooltip.lines, 'left')
+		local right = lineFontString(game, tooltip, #tooltip.lines, 'right')
+		left:SetTextColor(line.r or line.lr or 1, line.g or line.lg or 1, line.b or line.lb or 1)
+		right:SetTextColor(line.rr or 1, line.rg or 1, line.rb or 1)
+	end
 	function tooltip:SetOwner(owner, anchor)
 		self.owner, self.anchor = owner, anchor
 	end
+	-- Like the client, clearing runs OnTooltipCleared and hides the money frames.
 	function tooltip:ClearLines()
 		self.lines = {}
+		for index = 1, self.numMoneyFrames or 0 do
+			game.env[self.name .. 'MoneyFrame' .. index]:Hide()
+		end
+		self.shownMoneyFrames = nil
+		if self.scripts.OnTooltipCleared then
+			self.scripts.OnTooltipCleared(self)
+		end
 	end
 	function tooltip:Hide()
+		local wasShown = self.isShown
 		self.isShown = false
 		self.hiddenCount = (self.hiddenCount or 0) + 1
+		if wasShown and self.scripts.OnHide then
+			self.scripts.OnHide(self)
+		end
 	end
 	function tooltip:AddLine(text, r, g, b, wrap)
-		self.lines[#self.lines + 1] = { left = text, r = r, g = g, b = b, wrap = wrap }
+		addLine({ left = text, r = r, g = g, b = b, wrap = wrap })
 	end
 	function tooltip:AddDoubleLine(left, right, lr, lg, lb, rr, rg, rb)
-		self.lines[#self.lines + 1] =
-			{ left = left, right = right, lr = lr, lg = lg, lb = lb, rr = rr, rg = rg, rb = rb }
+		addLine({ left = left, right = right, lr = lr, lg = lg, lb = lb, rr = rr, rg = rg, rb = rb })
+	end
+	function tooltip:NumLines()
+		return #self.lines
+	end
+	function tooltip:GetName()
+		return self.name
+	end
+	function tooltip:GetLeft()
+		return self.left
+	end
+	function tooltip:GetWidth()
+		return self.width
+	end
+	function tooltip:GetEffectiveScale()
+		return self.scale or 1
+	end
+	-- What the client's tooltip template has; a test clears scriptNames to model one without.
+	function tooltip:HasScript(script)
+		return self.scriptNames[script] == true
+	end
+	function tooltip:CreateTexture(_, layer)
+		local texture = FakeGame.newWidget('Texture', self)
+		texture.layer = layer
+		if self.hasPixelSnapping ~= false then
+			function texture:SetSnapToPixelGrid(isSnapped)
+				self.isSnappedToPixelGrid = isSnapped
+			end
+			function texture:SetTexelSnappingBias(bias)
+				self.texelSnappingBias = bias
+			end
+		end
+		self.children[#self.children + 1] = texture
+		return texture
 	end
 	function tooltip:Show()
 		self.shownCount = self.shownCount + 1
+		self.isShown = true
 	end
 	function tooltip:IsShown()
 		return self.isShown
@@ -322,12 +485,35 @@ local function newTooltip(game, name)
 	function tooltip:GetOwner()
 		return self.owner
 	end
+	-- Runs after the script already set, as the client chains hooks.
 	function tooltip:HookScript(script, handler)
-		self.scripts[script] = handler
+		local previous = self.scripts[script]
+		self.scripts[script] = function(...)
+			if previous then
+				previous(...)
+			end
+			handler(...)
+		end
+	end
+	-- The client's SetTooltipMoney: a ' ' line with a money frame anchored to it by name.
+	function tooltip:AddMoneyLine(copper)
+		self:AddLine(' ')
+		local index = (self.shownMoneyFrames or 0) + 1
+		local frameName = self.name .. 'MoneyFrame' .. index
+		local moneyFrame = game.env[frameName]
+		if not moneyFrame then
+			moneyFrame = FakeGame.newWidget('Frame', self)
+			game.env[frameName] = moneyFrame
+			self.numMoneyFrames = index
+		end
+		moneyFrame.copper = copper
+		moneyFrame:ClearAllPoints()
+		moneyFrame:SetPoint('LEFT', self.name .. 'TextLeft' .. #self.lines, 'LEFT', 4, 0)
+		moneyFrame:Show()
+		self.shownMoneyFrames = index
 	end
 	function tooltip:RefreshData()
 		self.refreshed = (self.refreshed or 0) + 1
-		self.lines = {}
 		game:ShowItemTooltip(self.shownItemId, self)
 	end
 	return tooltip
@@ -343,8 +529,9 @@ end
 --- game.inCombat drives InCombatLockdown; game.secretValues[value] marks a secret value;
 --- RequestLoadItemDataByID calls are recorded in game.itemDataRequests; GetItemInfo of an item
 --- not in itemInfo (the client then asks the server for it) in game.itemInfoMisses.
---- Bags: game.containerItems['bag:slot'] = { itemID?, stackCount, isBound, hyperlink } (itemID
---- nil models an item the client has not loaded), game.bagSlots[bag] = slots.
+--- Bags: game.containerItems['bag:slot'] = { itemID?, stackCount, isBound, hyperlink, quality?,
+--- hasNoValue? } (itemID nil models an item the client has not loaded), game.bagSlots[bag] =
+--- slots, game.questItems['bag:slot'] = { isQuestItem, questID?, isActive } (quest info).
 --- Trade: game.trade.player / .target = { money, slots = { [slot] = { name?, count, link? } } }
 --- (a slot with a name and no link is an item not loaded yet); game.partner = { name, guid,
 --- isGuild }; game.friendGuids[guid] marks a friend, game.bnetFriends lists Battle.net friends'
@@ -438,7 +625,10 @@ end
 --- Step 5's bookkeeping APIs: owned auctions, the mailbox, the merchant, destroying, crafting.
 --- game.owned = { { auctionID, itemKey, quantity, status } }; game.mail = { { subject, money,
 --- daysLeft, invoice = { type, itemName, bid, deposit, cut, count }, items = { { itemId, count } } } };
---- game.merchant = { [index] = { itemId, price, stack, hasExtendedCost } }; game.itemCounts;
+--- game.merchant = { [index] = { itemId, price, stack, hasExtendedCost, available?, costs? } }
+--- (costs = { { link, count } }, available nil for unlimited); game.merchantNpc = { guid, name,
+--- faction, reaction } is the merchant spoken to; game.merchantFilter, game.mapId, game.zone;
+--- game.itemCounts;
 --- game.schematics = { [recipeId] = schematic }, all learned unless game.unlearned[recipeId];
 --- game.cursorItem; game.isMerchantOpen.
 function addTrackingApi(game, env)
@@ -533,9 +723,52 @@ function addTrackingApi(game, env)
 	env.C_MerchantFrame = {
 		GetItemInfo = function(index)
 			local item = game.merchant[index]
-			return item and { price = item.price, stackCount = item.stack or 1, hasExtendedCost = item.hasExtendedCost }
+			if item and item.throws then
+				error('client error')
+			end
+			return item
+				and {
+					price = item.price,
+					stackCount = item.stack or 1,
+					numAvailable = item.available or -1,
+					hasExtendedCost = item.hasExtendedCost,
+				}
 		end,
 	}
+	env.GetMerchantNumItems = function()
+		return #game.merchant
+	end
+	env.GetMerchantItemLink = function(index)
+		local item = game.merchant[index]
+		return item and ('|cffffffff|Hitem:' .. item.itemId .. '::::|h[Item]|h|r') or nil
+	end
+	env.GetMerchantItemCostInfo = function(index)
+		local item = game.merchant[index]
+		return item and item.costs and #item.costs or 0
+	end
+	env.GetMerchantItemCostItem = function(index, costIndex)
+		local cost = game.merchant[index] and game.merchant[index].costs and game.merchant[index].costs[costIndex]
+		if cost then
+			return 'icon', cost.count, cost.link, cost.name
+		end
+	end
+	env.GetMerchantFilter = function()
+		return game.merchantFilter or 1
+	end
+	env.LE_LOOT_FILTER_ALL = 1
+	env.UnitReaction = function(unit, other)
+		if unit == 'npc' and other == 'player' and game.merchantNpc then
+			return game.merchantNpc.reaction
+		end
+	end
+	env.C_Map = {
+		GetBestMapForUnit = function(unit)
+			return unit == 'player' and game.mapId or nil
+		end,
+	}
+	env.GetRealZoneText = function()
+		return game.zone
+	end
 	env.MerchantFrame = FakeGame.newWidget('Frame', env.UIParent)
 	env.MerchantFrame:Hide()
 	env.C_Container.UseContainerItem = function(...)
@@ -636,6 +869,7 @@ function FakeGame.new(options)
 		frame = newFrame(unknownEvents),
 		postCalls = {},
 		containerItems = {},
+		questItems = {},
 		itemInfo = options.itemInfo or {},
 		itemDataRequests = {},
 		itemInfoMisses = {},
@@ -739,6 +973,9 @@ function FakeGame.new(options)
 			game.acceptCount = game.acceptCount + 1
 		end,
 		UnitGUID = function(unit)
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.guid or nil
+			end
 			return unit == 'NPC' and game.partner and game.partner.guid or nil
 		end,
 		UnitIsInMyGuild = function(unit)
@@ -774,9 +1011,15 @@ function FakeGame.new(options)
 			if unit == 'NPC' then
 				return game.partner and game.partner.name or nil
 			end
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.name or nil
+			end
 			return 'Eilu'
 		end,
-		UnitFactionGroup = function()
+		UnitFactionGroup = function(unit)
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.faction or nil
+			end
 			return 'Alliance'
 		end,
 		GetCurrentRegion = function()
@@ -793,6 +1036,13 @@ function FakeGame.new(options)
 			end,
 			IsItemDataCachedByID = function(itemId)
 				return game.itemInfo[itemId] ~= nil
+			end,
+			-- Instant info needs no cache; classID comes from itemInfo (12 = quest item).
+			GetItemInfoInstant = function(itemId)
+				local info = game.itemInfo[itemId]
+				if info then
+					return itemId, 'Type', 'Sub', '', 0, info.classID or 0, 0
+				end
 			end,
 			RequestLoadItemDataByID = function(itemId)
 				game.itemDataRequests[#game.itemDataRequests + 1] = itemId
@@ -883,6 +1133,9 @@ function FakeGame.new(options)
 			GetContainerNumSlots = function(bag)
 				return game.bagSlots[bag] or 0
 			end,
+			GetContainerItemQuestInfo = function(bag, slot)
+				return game.questItems[bag .. ':' .. slot] or { isQuestItem = false, isActive = false }
+			end,
 		},
 	}
 	if options.hasClock ~= false then
@@ -898,6 +1151,13 @@ function FakeGame.new(options)
 			end,
 		}
 	end
+	-- The client's tooltip font objects (Tooltip_Med, Friz 12, and Tooltip_Small, Friz 10).
+	-- The client's tooltip font objects (Tooltip_Med, Friz 12; Tooltip_Small, Friz 10; the header
+	-- 14), all white.
+	local friz = 'Fonts\\FRIZQT__.TTF'
+	env.GameTooltipHeaderText = { name = 'GameTooltipHeaderText', path = friz, size = 14, color = { 1, 1, 1 } }
+	env.GameTooltipText = { name = 'GameTooltipText', path = friz, size = 12, color = { 1, 1, 1 } }
+	env.GameTooltipTextSmall = { name = 'GameTooltipTextSmall', path = friz, size = 10, color = { 1, 1, 1 } }
 	env.GameTooltip = newTooltip(game, 'GameTooltip')
 	env.ItemRefTooltip = newTooltip(game, 'ItemRefTooltip')
 	game.env = env
@@ -963,7 +1223,7 @@ function FakeGame.new(options)
 	--- Builds an item tooltip: clears it and runs the post-calls (or the script hook).
 	function game:ShowItemTooltip(itemId, tooltip)
 		tooltip = tooltip or self.env.GameTooltip
-		tooltip.lines = {}
+		tooltip:ClearLines()
 		tooltip.shownItemId = itemId
 		tooltip.itemLink = '|cffffffff|Hitem:' .. itemId .. '::::|h[Item]|h|r'
 		for _, postCall in ipairs(self.postCalls) do
@@ -983,6 +1243,7 @@ FakeGame.FEATURE_FILES = {
 	'Features/Pricing.lua',
 	'Features/Value.lua',
 	'Features/Scan.lua',
+	'Features/Vendors.lua',
 	'Features/Tooltip/Tooltip.lua',
 	'Features/Bags/Bags.lua',
 	'Features/Trade/Trade.lua',
@@ -1125,10 +1386,13 @@ function FakeGame.startAddon(t, game, beforeStart)
 	for _, path in ipairs(t.addonPaths(FakeGame.FEATURE_FILES)) do
 		assert(loadfile(path))('Haggler', ns)
 	end
-	-- game.savedDb / game.savedCharDb carry saved variables across a simulated /reload.
+	-- game.savedDb / game.savedCharDb / game.savedArchiveDb carry saved variables across a simulated /reload.
 	game.savedDb = game.savedDb or {}
 	game.savedCharDb = game.savedCharDb or {}
+	game.savedArchiveDb = game.savedArchiveDb or {}
 	ns.store = assert(ns.Store.open(game.savedDb, game.savedCharDb))
+	ns.archiveDb = ns.ScanArchive.open(game.savedArchiveDb)
+	ns.vendorDb = ns.VendorStore.open(game.savedArchiveDb)
 	if beforeStart then
 		beforeStart(ns)
 	end

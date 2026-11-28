@@ -5,33 +5,38 @@
 
 	  BagView.new({ wow, values, painter, icons, options, isActive, money })
 	    values()   -> Value|nil      the value service (nil while it is off)
-	    options()  -> { showValue, vendorBadge, showTotal }
+	    options()  -> { showValue, decisionBadge, typeBadge, showTotal }
 	    isActive() -> boolean        the Bags module is on
 	    money(copper) -> string
 	  view:PaintSlot(button, bag, slot)
-	  view:DecideItem(itemId, count, isBound) -> Decision
+	  view:DecideItem(itemId, count, item?) -> Decision   item = { isBound?, isQuest?, isJunk? }
+	  view:ItemFlags(itemId, quality, isBound) -> item   for a host that reads no bag slot
 	  view:ClearSlot(button)
-	  view:ApplyIcon(texture, badge)
+	  view:NewBadgeFrame(frame) / view:PaintBadgeFrame(frame, badge|nil)   one badge in a frame
 	  view:ValueLabel(decision) -> string|nil   the value text with its low marker
 	  view:TrackTotal(fontString, onResize?)
 	  view:BagTotal() -> Total|nil
 	  view:UpdateTotals()
 	  view:StartPass()   a fresh price context for the next paints (prices or bags changed)
 
-	Combat: painting is skipped while in combat lockdown and the view is marked dirty; the Bags
-	module repaints when combat ends. Textures are allowed in combat, but bag updates (looting)
-	are frequent there and nothing on a bag button needs to change mid-fight.
+	Combat: no item is valued while in combat lockdown (bag updates from looting are frequent
+	there) and the view is marked dirty; the Bags module repaints when combat ends. A slot that
+	empties or holds a different stack mid-fight is cleared at once (textures are allowed in
+	combat), so no button keeps the badge of an item it no longer holds.
 ]]
 local _, ns = ...
 
 local BagView = {}
 ns.BagView = BagView
 
+-- Enum.ItemQuality.Poor: a grey item.
+BagView.POOR_QUALITY = 0
+
 BagView.TOTAL_LABEL = 'Bags'
 BagView.LOW_ICON_SIZE = 12
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local totalText
+local totalText, slotFlags, stackKey
 
 local ViewMethods = {}
 ViewMethods.__index = ViewMethods
@@ -47,7 +52,12 @@ function BagView.new(options)
 			error('BagView.new: needs ' .. fn, 2)
 		end
 	end
-	return setmetatable({ deps = options, totals = {}, isDirty = false }, ViewMethods)
+	return setmetatable({
+		deps = options,
+		totals = {},
+		isDirty = false,
+		paintedStacks = setmetatable({}, { __mode = 'k' }),
+	}, ViewMethods)
 end
 
 function ViewMethods:IsActive()
@@ -71,8 +81,23 @@ function ViewMethods:ItemValue(itemId, count, isBound)
 end
 
 --- The badges and value text for a stack.
-function ViewMethods:DecideItem(itemId, count, isBound)
-	return ns.Badges.decide(self:ItemValue(itemId, count, isBound), self.deps.options())
+--- @param item table|nil { isBound?, isQuest?, isJunk? }
+function ViewMethods:DecideItem(itemId, count, item)
+	item = type(item) == 'table' and item or {}
+	return ns.Badges.decide(self:ItemValue(itemId, count, item.isBound == true), self.deps.options(), item)
+end
+
+--- Bound, quest and junk flags from what a host knows of an item: its quality and binding. Junk
+--- is a grey the vendor pays for.
+--- @return table item { isBound, isQuest, isJunk }
+function ViewMethods:ItemFlags(itemId, quality, isBound)
+	local wow = self.deps.wow
+	local info = quality == BagView.POOR_QUALITY and wow:CachedItemInfo(itemId) or nil
+	return {
+		isBound = isBound == true,
+		isQuest = wow:IsQuestItemClass(itemId),
+		isJunk = info ~= nil and (info.vendorPrice or 0) > 0,
+	}
 end
 
 --- Paints one Blizzard-style item button from its bag slot. Clears it when the module is off,
@@ -83,30 +108,41 @@ function ViewMethods:PaintSlot(button, bag, slot)
 	end
 	local painter = self.deps.painter
 	if not self:IsActive() then
-		painter:Clear(button)
+		self:ClearSlot(button)
 		return
 	end
-	if self.deps.wow:IsInCombat() then
-		self.isDirty = true
-		return
-	end
-	local item = type(bag) == 'number' and type(slot) == 'number' and self.deps.wow:ContainerItem(bag, slot) or nil
+	local wow = self.deps.wow
+	local item = type(bag) == 'number' and type(slot) == 'number' and wow:ContainerItem(bag, slot) or nil
 	if not item or not item.itemId then
-		painter:Clear(button)
+		self:ClearSlot(button)
 		return
 	end
-	painter:Paint(button, self:DecideItem(item.itemId, item.count, item.isBound))
+	local stack = stackKey(item)
+	if wow:IsInCombat() then
+		self.isDirty = true
+		if self.paintedStacks[button] ~= stack then
+			self:ClearSlot(button)
+		end
+		return
+	end
+	painter:Paint(button, self:DecideItem(item.itemId, item.count, slotFlags(wow, item, bag, slot)))
+	self.paintedStacks[button] = stack
 end
 
 --- Removes the badges and value from a button (a host showing a slot that is not the player's).
 function ViewMethods:ClearSlot(button)
 	if type(button) == 'table' then
 		self.deps.painter:Clear(button)
+		self.paintedStacks[button] = nil
 	end
 end
 
-function ViewMethods:ApplyIcon(texture, badge)
-	return self.deps.icons:Apply(texture, badge.icon, badge.color)
+function ViewMethods:NewBadgeFrame(frame)
+	return self.deps.painter:NewBadgeFrame(frame)
+end
+
+function ViewMethods:PaintBadgeFrame(frame, badge)
+	return self.deps.painter:PaintBadgeFrame(frame, badge)
 end
 
 function ViewMethods:ValueLabel(decision)
@@ -156,6 +192,21 @@ function ViewMethods:UpdateTotals()
 end
 
 -- Helpers ---------------------------------------------------------------------------------
+
+-- A bag slot's flags: the slot's own quest info, and junk as the client marks it (a grey that
+-- has a vendor value).
+function slotFlags(wow, item, bag, slot)
+	return {
+		isBound = item.isBound,
+		isQuest = wow:IsQuestSlot(bag, slot, item.itemId),
+		isJunk = item.quality == BagView.POOR_QUALITY and not item.hasNoValue,
+	}
+end
+
+-- What a painted badge was decided from: the item and its count.
+function stackKey(item)
+	return item.itemId .. 'x' .. tostring(item.count)
+end
 
 function totalText(view, total)
 	if not total then

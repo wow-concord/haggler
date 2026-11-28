@@ -512,10 +512,10 @@ function assessConfidence(facts, ageSeconds, market, ctx)
 				reasons,
 				'ownScanOverlay',
 				'medium',
-				'AHledger has no synced table for this market; its figures come from your own scan'
+				'AHledger has no synced table for this market, so its figures come from your own scan'
 			)
 		elseif problem then
-			addReason(reasons, problem.code, 'low', problem.text .. '; own scans only')
+			addReason(reasons, problem.code, 'low', problem.text .. ", so only Haggler's own scans count")
 		end
 		if facts.isSnapshot then
 			addReason(reasons, 'snapshot', 'medium', 'bundled AHledger prices, older than synced ones')
@@ -529,7 +529,7 @@ function assessConfidence(facts, ageSeconds, market, ctx)
 	local mismatch = tableOrNil(ctx.marketMismatch)
 	if facts.usesSourceFigure and mismatch then
 		local text = string.format(
-			'AHledger uses %s; Haggler prices %s',
+			'AHledger uses %s while Haggler prices %s',
 			tostring(mismatch.sourceMarket),
 			tostring(mismatch.marketKey)
 		)
@@ -540,13 +540,18 @@ function assessConfidence(facts, ageSeconds, market, ctx)
 		addReason(reasons, 'fewListings', 'medium', 'few units listed')
 	end
 	if facts.isFallbackBase then
-		addReason(reasons, 'fallbackBase', 'medium', 'no scan depth; AHledger lowest buyout, not bait-checked')
+		addReason(
+			reasons,
+			'fallbackBase',
+			'medium',
+			"no scan depth, so this is AHledger's lowest buyout and not bait-checked"
+		)
 	end
 	if market.isStepInferred then
-		addReason(reasons, 'inferredStep', 'medium', 'max stack unknown; whole silver assumed')
+		addReason(reasons, 'inferredStep', 'medium', 'max stack unknown, so whole silver is assumed')
 	end
 	for _, input in ipairs(facts.badInputs or {}) do
-		addReason(reasons, 'badInput', 'medium', input .. ' was not usable; treated as unknown')
+		addReason(reasons, 'badInput', 'medium', input .. ' was not usable and is treated as unknown')
 	end
 	if facts.isCapOverridden then
 		addReason(reasons, 'capOverridden', 'medium', 'a cap was overridden to keep the floor')

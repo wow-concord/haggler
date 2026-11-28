@@ -27,7 +27,7 @@ end
 
 -- Strict mode: a global write during the specs is an error, except the globals the add-on owns
 -- (the same list as .luacheckrc).
-local OWNED_GLOBALS = { HagglerDB = true, HagglerCharDB = true, SLASH_HAGGLER1 = true }
+local OWNED_GLOBALS = { HagglerDB = true, HagglerCharDB = true, HagglerArchiveDB = true, SLASH_HAGGLER1 = true }
 setmetatable(_G, {
 	__newindex = function(globals, name, value)
 		if not OWNED_GLOBALS[name] then

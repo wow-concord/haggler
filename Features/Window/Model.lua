@@ -9,6 +9,9 @@
 	      how the frame shows when the auction house opens: it takes over Blizzard's window,
 	      docks beside it (always when TradeSkillMaster or Auctionator runs the auction house),
 	      or waits for /hag
+  WindowModel.opensAtAuctionHouse(placement, ahView) -> boolean
+      whether Haggler's frame opens by itself when the auction house opens: the placement
+      lets it (not manual) and the view the player last switched to is Haggler's
 	  WindowModel.page(list, pageIndex, pageSize) -> { items, page, pageCount, first }
 	  WindowModel.itemIdFromText(text, deps) -> itemId | nil, reason
 	  WindowModel.lookupLines(quote) -> { { text, level? }... }
@@ -31,6 +34,12 @@ WindowModel.AH_MODES = {
 	{ value = 'dock', label = "Open beside Blizzard's window" },
 	{ value = 'manual', label = 'Only when opened with /hag' },
 }
+-- The window the player last switched to at the auction house; Haggler's is today's default.
+WindowModel.AH_VIEWS = {
+	{ value = 'haggler', label = "Haggler's window" },
+	{ value = 'blizzard', label = "Blizzard's window" },
+}
+WindowModel.DEFAULT_AH_VIEW = 'haggler'
 -- Add-ons that take over the auction house themselves; Haggler docks instead of fighting them.
 WindowModel.OTHER_AH_ADDONS = { 'TradeSkillMaster', 'Auctionator' }
 WindowModel.DURATIONS = {
@@ -94,6 +103,13 @@ function WindowModel.placement(ahMode, otherAddon)
 		return 'dock'
 	end
 	return 'takeover'
+end
+
+--- Whether Haggler's frame opens by itself at the auction house.
+--- @param placement string WindowModel.placement's answer
+--- @param ahView string|nil the remembered view, 'haggler' or 'blizzard'; nil is the default
+function WindowModel.opensAtAuctionHouse(placement, ahView)
+	return placement ~= 'manual' and (ahView or WindowModel.DEFAULT_AH_VIEW) == 'haggler'
 end
 
 --- One page of a list.

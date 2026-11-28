@@ -1122,3 +1122,43 @@ t.test('Concord answers reach Haggler_CheckDB: by onAnswer, or from ConcordCheck
 	registered.onAnswer({ owner = 'Haggler', id = 'window.tabs', answer = 'pass', runKey = 'run3' })
 	t.eq(resultOf('window.tabs'), nil, 'a missing store is no answer')
 end)
+
+t.group('identity on client 71037')
+
+local function identityEnv(fields)
+	local env = {
+		GetBuildInfo = function()
+			return '1.60.1', '71037'
+		end,
+		UnitName = function()
+			return 'Aurelius', 'Zothari'
+		end,
+		GetRealmName = function()
+			return ''
+		end,
+		UnitGUID = function(unit)
+			return unit == 'player' and 'Player-6945-0052E899' or nil
+		end,
+	}
+	for key, value in pairs(fields or {}) do
+		env[key] = value
+	end
+	return env
+end
+
+t.test("the character key is Haggler's: client realm, else remembered realm, else server number", function()
+	t.eq(ns.Check.readIdentity(identityEnv()).charKey, 'Aurelius-Server6945', 'the surname is not a realm')
+	t.eq(
+		ns.Check.readIdentity(identityEnv({ HagglerCharDB = { realm = 'CAMWOW EU5 Realm 3 PvE' } })).charKey,
+		'Aurelius-CAMWOW EU5 Realm 3 PvE'
+	)
+	t.eq(
+		ns.Check.readIdentity(identityEnv({
+			GetRealmName = function()
+				return 'Nightslayer'
+			end,
+		})).charKey,
+		'Aurelius-Nightslayer'
+	)
+	t.eq(ns.Check.readIdentity(identityEnv({ UnitGUID = function() end })).charKey, nil, 'never "Name-"')
+end)

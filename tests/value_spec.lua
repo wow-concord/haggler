@@ -234,3 +234,33 @@ t.test('merging confidences keeps each reason once and the weakest level', funct
 	t.eq(merged.reasons[1].code, 'thin')
 	t.eq(Value.mergeConfidence({}).level, 'high', 'nothing to doubt is high')
 end)
+
+t.test('a stack carries the market facts the bag decision reads', function()
+	local value = newValue()
+	local linen = assert(value:Stack(LINEN, 5, { ruleId = 'median' }))
+	t.eq(linen.lowestListed, 95, 'the lowest listing (AHledger stands in without a scan)')
+	t.eq(linen.typicalPrice, 125, 'the 30-day median')
+	t.eq(linen.recentPrice, 118, 'the 7-day median')
+	local scanned = assert(newValue({ snapshot = LINEN_SCAN }):Stack(LINEN, 5, { ruleId = 'median' }))
+	t.eq(scanned.lowestListed, 100, 'the scan minimum wins')
+	local rock = assert(value:Stack(ROCK, 1, { ruleId = 'median' }))
+	t.eq(rock.lowestListed, nil)
+	t.eq(rock.typicalPrice, nil)
+	t.eq(rock.recentPrice, nil)
+	t.eq(rock.typicalAhNet, nil)
+end)
+
+t.test('a stack carries the AH net at its usual price, deposit risk counted as for its own', function()
+	local value = newValue()
+	local wool = assert(value:Stack(WOOL, 5, { ruleId = 'median' }))
+	t.eq(wool.typicalPrice, 310)
+	local expected = ns.Guardrail.opportunity({ price = 310, units = 5, vendor = 33, salesPerDay = 0.5 })
+	t.eq(wool.typicalAhNet, expected.ahNet)
+	t.truthy(wool.typicalAhNet < ns.Guardrail.saleNet(310, 5), 'under a sale a day, some deposits are lost')
+	local free = assert(newValue({
+		deposit = function()
+			return 0
+		end,
+	}):Stack(WOOL, 5, { ruleId = 'median' }))
+	t.eq(free.typicalAhNet, ns.Guardrail.saleNet(310, 5), 'no deposit, nothing to lose')
+end)

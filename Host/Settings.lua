@@ -6,9 +6,16 @@
 	  { key, type = 'choice', label, default, choices = { { value, label }, ... } }
 	  { key, type = 'binding', label, default = '' }                    a key name; '' is unbound
 
+	Any entry may also carry a note (a line shown under it in /hag list) and isHidden, a
+	fun(settings): boolean that leaves the entry out of /hag list while it has no effect; get, set
+	and reset still reach it.
+
 	Defaults live in the schema; the stored table keeps only values that differ from them, so a
 	changed default reaches everyone who never touched the setting. The /hag command tree is
 	generated from the same schemas, so a window drawn from them later always matches.
+
+	A setting a module drops can be carried over once with TakeRetired, which hands back its stored
+	value and removes it.
 
 	A bad schema is a programmer error and throws. A bad value from the player is an expected
 	outcome: Set and Parse return nil and a reason.
@@ -176,6 +183,24 @@ function SettingsMethods:Entry(moduleKey, key)
 	return entry
 end
 
+--- Removes a stored value whose key is no longer in the module's schema and returns it, so a
+--- module can carry an old setting over to its new one. Throws for a key the schema still has.
+--- @return any|nil the stored value, nil when none was stored
+function SettingsMethods:TakeRetired(moduleKey, key)
+	local schema = self.schemas[moduleKey]
+	if schema and schema.byKey[key] then
+		error(string.format('Settings:TakeRetired: %s.%s is still a setting', tostring(moduleKey), tostring(key)), 2)
+	end
+	local moduleValues = self.stored[moduleKey]
+	if type(moduleValues) ~= 'table' then
+		return nil
+	end
+	local value = moduleValues[key]
+	moduleValues[key] = nil
+	self.stored[moduleKey] = next(moduleValues) and moduleValues or nil
+	return value
+end
+
 --- Text for a value, as the command tree prints it.
 function SettingsMethods:Format(moduleKey, key)
 	return formatValue(self:Entry(moduleKey, key), self:Get(moduleKey, key))
@@ -242,13 +267,18 @@ function runList(settings, args)
 	local moduleKeys = wanted and { wanted } or settings:Modules()
 	for _, moduleKey in ipairs(moduleKeys) do
 		for _, entry in ipairs(settings:Schema(moduleKey)) do
-			lines[#lines + 1] = string.format(
-				'%s.%s = %s  (%s)',
-				moduleKey,
-				entry.key,
-				settings:Format(moduleKey, entry.key),
-				entry.label
-			)
+			if not (entry.isHidden and entry.isHidden(settings)) then
+				lines[#lines + 1] = string.format(
+					'%s.%s = %s  (%s)',
+					moduleKey,
+					entry.key,
+					settings:Format(moduleKey, entry.key),
+					entry.label
+				)
+				if entry.note then
+					lines[#lines + 1] = '    ' .. entry.note
+				end
+			end
 		end
 	end
 	if #lines == 0 then
@@ -328,6 +358,12 @@ function validateEntry(entry)
 	end
 	if type(entry.label) ~= 'string' or entry.label == '' then
 		return 'label is required'
+	end
+	if entry.note ~= nil and (type(entry.note) ~= 'string' or entry.note == '') then
+		return 'note must be a non-empty string'
+	end
+	if entry.isHidden ~= nil and type(entry.isHidden) ~= 'function' then
+		return 'isHidden must be a function'
 	end
 	if entry.type == 'slider' then
 		local isRange = type(entry.min) == 'number' and type(entry.max) == 'number' and entry.min <= entry.max

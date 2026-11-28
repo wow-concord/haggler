@@ -140,7 +140,7 @@ function buildDetail(container, ctx)
 	local detail = ctx.wow:CreateFrame('Frame', container)
 	detail:SetPoint('TOPLEFT', container, 'TOPLEFT', LIST_WIDTH + 24, 0)
 	detail:SetPoint('BOTTOMRIGHT', container, 'BOTTOMRIGHT')
-	container.title = ui:Text(detail, 17, 'color.text.title')
+	container.title = ui:Text(detail, 17, 'color.text.title', ns.Widgets.HEADING_FACE)
 	container.title:SetPoint('TOPLEFT', detail, 'TOPLEFT')
 	container.lines = ui:PagedLines(detail, DETAIL_LINES, 13, 400)
 	container.lines.frame:SetPoint('TOPLEFT', container.title, 'BOTTOMLEFT', 0, -8)
@@ -404,9 +404,5 @@ function marketNow()
 end
 
 function charKey()
-	local player = ns.wow:Player()
-	if type(player) ~= 'table' or type(player.name) ~= 'string' or type(player.realm) ~= 'string' then
-		return nil
-	end
-	return player.name .. '-' .. player.realm
+	return ns.store and ns.store:CharacterKey(ns.wow:Player()) or nil
 end

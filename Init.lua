@@ -17,6 +17,7 @@ ns.host = ns.Host.create({
 })
 ns.theme = ns.Theme.new(ns.Tokens)
 ns.tooltips = ns.Tooltip.new({
+	theme = ns.theme,
 	wow = ns.wow,
 	onError = function(owner, err)
 		ns.wow:Print(string.format('tooltip lines of %s failed: %s', owner, err))

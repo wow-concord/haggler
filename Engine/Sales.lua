@@ -447,7 +447,7 @@ function ownSalesReason(stats, minScans, minHours)
 		code = 'ownSalesThin',
 		level = 'high',
 		text = string.format(
-			'sold a day from AHledger; own count has %d of %d scans, %d of %d hours',
+			'sold a day from AHledger, as your own count has %d of %d scans and %d of %d hours',
 			stats.scans,
 			minScans,
 			math.floor(stats.hours),
@@ -467,7 +467,8 @@ end
 function trollReason(view)
 	local percent = math.floor(view.trollShare * 100 + 0.5)
 	local level = view.trollShare > Sales.LOW_TROLL_SHARE and 'low' or 'medium'
-	local text = view.source == 'own' and string.format('%d%% of vanished units were troll buys (left out)', percent)
+	local text = view.source == 'own'
+			and string.format('%d%% of vanished units were troll buys and are left out', percent)
 		or string.format('sales may include troll buys (%d%% of vanished units)', percent)
 	return { code = 'trollBuys', level = level, text = text }
 end

@@ -4,7 +4,8 @@
 	atlas PNG per stroke weight, all with the same layout); this file turns an icon name into a
 	texture path and texcoords, and tints it with a token colour.
 
-	  IconSet.new({ manifest?, theme?, basePath?, weight? })
+	  IconSet.new({ manifest?, theme?, basePath?, weight? })  weight defaults to the theme's
+	      icon.stroke when an atlas ships for it, else DEFAULT_WEIGHT
 	  icons:Lookup(name, weight?) -> { texture, texcoords = { left, right, top, bottom }, size } | nil
 	  icons:Apply(texture, name, colorToken?, weight?) -> boolean
 	  icons:Inline(name, size, colorToken?) -> '|T...|t' for font strings
@@ -26,12 +27,13 @@ IconSet.EXTENSION = '.png'
 -- is accepted.
 IconSet.WEIGHT_PATTERN = '^%d+%.?%d*$'
 IconSet.DEFAULT_WEIGHT = '2'
---- The low-confidence marker on frames (tooltips keep the text marker).
-IconSet.LOW_CONFIDENCE = 'alert-triangle'
-IconSet.LOW_CONFIDENCE_COLOR = 'color.state.danger'
+--- The low-confidence marker, on frames and in tooltips alike: a caution, so the triangle in
+--- the caution colour (circle-alert is for danger only).
+IconSet.LOW_CONFIDENCE = 'triangle-alert'
+IconSet.LOW_CONFIDENCE_COLOR = 'color.state.caution'
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local hasWeight, isSafeWeight, isTexcoords
+local hasWeight, isSafeWeight, isTexcoords, themeStrokeWeight
 
 local IconSetMethods = {}
 IconSetMethods.__index = IconSetMethods
@@ -45,12 +47,12 @@ function IconSet.new(options)
 		manifest = type(manifest) == 'table' and manifest or { texcoords = {}, weights = {} },
 		theme = options.theme,
 		basePath = options.basePath or IconSet.BASE_PATH,
-		weight = options.weight or IconSet.DEFAULT_WEIGHT,
+		weight = options.weight or themeStrokeWeight(options.theme, manifest) or IconSet.DEFAULT_WEIGHT,
 	}, IconSetMethods)
 end
 
 --- The texture and texcoords of one icon.
---- @param name string icon name, e.g. 'alert-triangle'
+--- @param name string icon name, e.g. 'triangle-alert'
 --- @param weight string|nil stroke weight; the set's default when nil
 --- @return table|nil { texture, texcoords = { left, right, top, bottom }, size }
 function IconSetMethods:Lookup(name, weight)
@@ -143,6 +145,19 @@ function isTexcoords(value)
 		end
 	end
 	return true
+end
+
+-- The theme's icon.stroke as an atlas weight ('1.5', '2'), or nil when it has none the manifest ships.
+function themeStrokeWeight(theme, manifest)
+	if type(theme) ~= 'table' or type(theme.Number) ~= 'function' or type(manifest) ~= 'table' then
+		return nil
+	end
+	local stroke = theme:Number('icon.stroke')
+	if stroke <= 0 then
+		return nil
+	end
+	local weight = string.format('%g', stroke)
+	return isSafeWeight(weight) and hasWeight(manifest, weight) and weight or nil
 end
 
 return IconSet

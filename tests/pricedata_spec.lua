@@ -216,7 +216,7 @@ t.test('no AHledger: a scan price is low confidence, naming why', function()
 	t.eq(price.copper, 99)
 	t.same(
 		reasonOf(price, 'noPriceSource'),
-		{ code = 'noPriceSource', level = 'low', text = 'AHledger is not loaded; own scans only' }
+		{ code = 'noPriceSource', level = 'low', text = "AHledger is not loaded, so only Haggler's own scans count" }
 	)
 	t.eq(price.confidence.level, 'low')
 	local median, reason = Rules.evaluate(MEDIAN_RULE, LINEN, ctx)
@@ -241,7 +241,7 @@ t.test('broken: a scan price is low, naming the failure, with no credit', functi
 	t.eq(price.source, 'scan')
 	t.same(
 		reasonOf(price, 'priceSourceFailing'),
-		{ code = 'priceSourceFailing', level = 'low', text = 'AHledger calls fail; own scans only' }
+		{ code = 'priceSourceFailing', level = 'low', text = "AHledger calls fail, so only Haggler's own scans count" }
 	)
 	t.eq(price.confidence.level, 'low')
 	t.eq(newService(newSource({ mode = 'broken' })):Quote(LINEN, { 'minimum' }).credit, nil)
@@ -253,7 +253,7 @@ t.test('a GetPrice that throws while the table answers is low too', function()
 	local price = Rules.evaluate(MINIMUM_RULE, LINEN, withScan(contextWith(source)))
 	t.same(
 		reasonOf(price, 'priceSourceFailing'),
-		{ code = 'priceSourceFailing', level = 'low', text = 'AHledger calls fail; own scans only' }
+		{ code = 'priceSourceFailing', level = 'low', text = "AHledger calls fail, so only Haggler's own scans count" }
 	)
 	t.eq(price.usesPriceSource, false)
 end)
@@ -342,7 +342,7 @@ t.test('a market AHledger has no table for is low, with its own reason and no cr
 	t.same(reasonOf(price, 'noMarketTable'), {
 		code = 'noMarketTable',
 		level = 'low',
-		text = 'AHledger has no prices for forever/normal/alliance/us; own scans only',
+		text = "AHledger has no prices for forever/normal/alliance/us, so only Haggler's own scans count",
 	})
 	t.eq(newService(source):Quote(LINEN, { 'minimum' }).credit, nil)
 end)
@@ -356,7 +356,7 @@ t.test('no synced table but AHledger answers from your own scan: no "no prices" 
 	t.same(reasonOf(price, 'ownScanOverlay'), {
 		code = 'ownScanOverlay',
 		level = 'medium',
-		text = 'AHledger has no synced table for this market; its figures come from your own scan',
+		text = 'AHledger has no synced table for this market, so its figures come from your own scan',
 	})
 	local vendor = Rules.evaluate(VENDOR_RULE, LINEN, contextWith(source))
 	t.same(vendor.confidence.reasons, {}, 'no AHledger figure, no overlay reason')
@@ -400,7 +400,7 @@ t.test('AHledger set to another market: Haggler keeps its own and says so', func
 	t.same(reasonOf(price, 'marketMismatch'), {
 		code = 'marketMismatch',
 		level = 'high',
-		text = 'AHledger uses forever/pvp/horde/us; Haggler prices forever/normal/alliance/us',
+		text = 'AHledger uses forever/pvp/horde/us while Haggler prices forever/normal/alliance/us',
 	})
 	t.eq(price.confidence.level, 'high', 'an info reason does not lower confidence')
 	local vendor = Rules.evaluate(VENDOR_RULE, LINEN, contextWith(source))
@@ -542,9 +542,9 @@ t.test('absent: the tooltip shows no credit, and the low marker names the reason
 	local game = startWith(nil)
 	scan(game)
 	local lines = game:ShowItemTooltip(LINEN)
-	t.eq(#lines, 2)
+	t.eq(#lines, 4, 'the block, its low reason and its collapsed closing separator')
 	t.eq(lines[1].right, 'scan just now · no table')
-	t.truthy(lines[2].right:find('(!) low: AHledger is not loaded; own scans only', 1, true))
+	t.eq(lines[3].left, "Low confidence, AHledger is not loaded, so only Haggler's own scans count")
 end)
 
 t.test('broken: nothing throws; prices come from scans', function()
@@ -590,4 +590,70 @@ t.test('AHledger on another market with nothing for Haggler: the note comes at P
 	t.truthy(game.printed[1]:find('AHledger uses forever/pvp/horde/us', 1, true))
 	scan(game)
 	t.truthy(reasonOf(addon.prices:Get(LINEN, 'minimum'), 'noMarketTable'))
+end)
+
+t.group('client build 71037: GetRealmName answers ""')
+
+local EU_NORMAL = 'forever/normal/horde/eu'
+local EU_PVP = 'forever/pvp/horde/eu'
+
+local function startRealmlessHorde(api)
+	local game = newGame(api)
+	game.env.GetRealmName = function()
+		return ''
+	end
+	game.env.UnitFactionGroup = function()
+		return 'Horde'
+	end
+	game.env.GetCurrentRegion = function()
+		return 3
+	end
+	game.env.UnitGUID = function(unit)
+		return unit == 'player' and 'Player-6928-00A1AEB0' or nil
+	end
+	return game, FakeGame.startAddon(t, game)
+end
+
+t.test("no realm name on a PvP character: the market is AHledger's, available, nothing said", function()
+	local game, addon =
+		startRealmlessHorde((FakeGame.newAHledgerAPI({ market = EU_PVP, updated = UPDATED, rows = ROWS })))
+	t.eq(addon.prices:MarketKey(), EU_PVP)
+	t.eq(addon.prices:SourceStatus().isAvailable, true)
+	game:Fire('PLAYER_LOGIN')
+	t.same(game.printed, {})
+	t.same(addon.errors, {})
+end)
+
+t.test('no realm name on a Normal character: the Normal market stays available', function()
+	local game, addon =
+		startRealmlessHorde((FakeGame.newAHledgerAPI({ market = EU_NORMAL, updated = UPDATED, rows = ROWS })))
+	t.eq(addon.prices:MarketKey(), EU_NORMAL)
+	t.eq(addon.prices:SourceStatus().isAvailable, true)
+	game:Fire('PLAYER_LOGIN')
+	t.same(game.printed, {})
+	t.same(addon.errors, {})
+end)
+
+t.test("no realm name and no GUID yet: the market waits for the character, then takes AHledger's", function()
+	-- AHledger answers the Normal market until it knows the character (its GUID), as 0.15.1 does.
+	local api, apiState = FakeGame.newAHledgerAPI({ market = EU_NORMAL, updated = UPDATED, rows = ROWS })
+	local game = newGame(api)
+	game.env.GetRealmName = function()
+		return ''
+	end
+	game.env.UnitFactionGroup = function()
+		return 'Horde'
+	end
+	game.env.GetCurrentRegion = function()
+		return 3
+	end
+	local addon = FakeGame.startAddon(t, game)
+	t.eq(addon.prices:MarketKey(), nil, 'not cached from a guess')
+	game.env.UnitGUID = function(unit)
+		return unit == 'player' and 'Player-6945-0052E899' or nil
+	end
+	apiState.market = EU_PVP
+	game:Fire('PLAYER_LOGIN')
+	t.eq(addon.prices:MarketKey(), EU_PVP)
+	t.same(addon.errors, {})
 end)

@@ -470,6 +470,34 @@ t.test('without a frame clock, slices are a fixed number of rows', function()
 	t.eq(saved[1].count, 5000)
 end)
 
+t.test('without a frame clock, packing and follow-up slices are a fixed, smaller number of items', function()
+	local stepsPerSlice = {}
+	local game = newScanner({
+		listings = manyListings(10),
+		hasClock = false,
+		newFollowUp = function()
+			local remaining = 3 * Scan.ITEMS_PER_SLICE
+			return {
+				Step = function(_, shouldContinue)
+					local steps = 0
+					while remaining > 0 and shouldContinue() do
+						remaining, steps = remaining - 1, steps + 1
+					end
+					stepsPerSlice[#stepsPerSlice + 1] = steps
+					return remaining == 0
+				end,
+				Result = function()
+					return nil
+				end,
+			}
+		end,
+	})
+	game:Fire('AUCTION_HOUSE_SHOW')
+	game:Fire('REPLICATE_ITEM_LIST_UPDATE')
+	game:RunFrames()
+	t.same(stepsPerSlice, { Scan.ITEMS_PER_SLICE, Scan.ITEMS_PER_SLICE, Scan.ITEMS_PER_SLICE })
+end)
+
 t.test('the house closing mid-read reads the rest at once and saves the scan', function()
 	local game, scanner, saved = newScanner({ listings = manyListings(20000) })
 	game.msPerRow = 0.001

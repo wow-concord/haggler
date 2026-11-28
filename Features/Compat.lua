@@ -139,7 +139,7 @@ function buildNotice(module)
 	ui:Fill(notice, 'color.surface.raised')
 	ui:Border(notice, 'color.border.subtle')
 
-	local title = ui:Text(notice, 17, 'color.text.title')
+	local title = ui:Text(notice, 17, 'color.text.title', ns.Widgets.HEADING_FACE)
 	title:SetPoint('TOPLEFT', notice, 'TOPLEFT', PADDING, -PADDING)
 	title:SetText('Haggler and AHledger')
 	local intro = ui:Text(notice, 13, 'color.text.secondary')

@@ -19,8 +19,10 @@
 	  view:IsActive()                         the Bags module is on
 	  view:PaintSlot(button, bag, slot)       Blizzard-style buttons: badges and value overlay
 	  view:ClearSlot(button)                  removes them (a slot that is not the player's)
-	  view:DecideItem(itemId, count, isBound) a Badges decision, for hosts with their own regions
-	  view:ApplyIcon(texture, badge)          tints an icon texture for a decision's badge
+	  view:DecideItem(itemId, count, item?)   a Badges decision, for hosts with their own regions
+	  view:ItemFlags(itemId, quality, isBound) bound, quest and junk flags without a bag slot
+	  view:NewBadgeFrame(frame)               fills a frame with one badge's glyph and outline
+	  view:PaintBadgeFrame(frame, badge?)     shows a badge in it (nil hides it)
 	  view:TrackTotal(fontString, onResize?)  a spot that shows the bag total
 ]]
 local _, ns = ...

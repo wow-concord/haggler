@@ -44,6 +44,21 @@ t.test('stores only values that differ from the default', function()
 	t.same(changes[1], { 'tooltip', 'detail', false, true })
 end)
 
+t.test('TakeRetired hands back a dropped setting once and removes it', function()
+	local settings, stored = newSettings()
+	stored.tooltip = { oldKey = false, detail = false }
+	t.eq(settings:TakeRetired('tooltip', 'oldKey'), false)
+	t.same(stored, { tooltip = { detail = false } })
+	t.eq(settings:TakeRetired('tooltip', 'oldKey'), nil, 'gone after the first take')
+	stored.tooltip = { oldKey = true }
+	t.eq(settings:TakeRetired('tooltip', 'oldKey'), true)
+	t.same(stored, {}, 'an emptied module table is dropped')
+	t.eq(settings:TakeRetired('nothing', 'oldKey'), nil)
+	t.raises(function()
+		settings:TakeRetired('tooltip', 'detail')
+	end, 'still a setting')
+end)
+
 t.test('no change event when the value is the same', function()
 	local settings, _, changes = newSettings()
 	settings:Set('tooltip', 'mode', 'compact')

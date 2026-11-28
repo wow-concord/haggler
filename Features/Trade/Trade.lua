@@ -185,8 +185,5 @@ function savedRuleId()
 end
 
 function characterKey(player)
-	if type(player.name) ~= 'string' or type(player.realm) ~= 'string' then
-		return nil
-	end
-	return player.name .. '-' .. player.realm
+	return ns.store and ns.store:CharacterKey(player) or nil
 end

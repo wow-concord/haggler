@@ -232,3 +232,37 @@ t.test('since login survives a /reload and restarts at the next login', function
 	t.eq((reloaded.sessions:Start()), game.now)
 	t.same(reloaded.errors, {})
 end)
+
+t.group('client build 71037: GetRealmName answers ""')
+
+local SAVED_REALM = 'CAMWOW EU5 Realm 3 PvE'
+
+local function startRealmless(beforeStart, game)
+	game = game or FakeGame.new({ now = MARCH_29 + 15 * 3600 })
+	game.env.GetRealmName = function()
+		return ''
+	end
+	game.env.UnitGUID = function(unit)
+		return unit == 'player' and 'Player-6928-00A1AEB0' or nil
+	end
+	return game, FakeGame.startAddon(t, game, beforeStart)
+end
+
+t.test('starting with no realm name leaves no module failing', function()
+	local _, addon = startRealmless()
+	t.same(addon.errors, {})
+	t.truthy(addon.sessions:Start(), 'the session has a start')
+end)
+
+t.test("a character's points saved under its realm name keep resolving once the name is gone", function()
+	local game, addon = startRealmless(function(started)
+		started.store:Settings().sessions = { mode = 'manual' }
+		started.store.db.sessions['Eilu-' .. SAVED_REALM] = { resetAt = 123 }
+	end)
+	t.same(addon.errors, {})
+	t.eq((addon.sessions:Start()), 123)
+	t.eq(game.savedCharDb.realm, SAVED_REALM, 'remembered for this character')
+	t.eq(game.savedCharDb.server, 6928, "with the server's id")
+	t.eq(game.savedDb.sessions['Eilu-' .. SAVED_REALM].server, 6928, "the session carries the server's id")
+	t.eq(game.savedDb.sessions['Eilu-'], nil, 'no "Name-" key')
+end)

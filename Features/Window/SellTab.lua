@@ -88,7 +88,7 @@ function buildDetail(container, ctx)
 	detail:SetPoint('TOPLEFT', container, 'TOPLEFT', LIST_WIDTH + 24, 0)
 	detail:SetPoint('BOTTOMRIGHT', container, 'BOTTOMRIGHT')
 	container.detail = detail
-	container.title = ui:Text(detail, 17, 'color.text.title')
+	container.title = ui:Text(detail, 17, 'color.text.title', ns.Widgets.HEADING_FACE)
 	container.title:SetPoint('TOPLEFT', detail, 'TOPLEFT')
 	container.rulePicker = ui:Stepper(detail, 300, function(delta)
 		local choices = ruleChoices()

@@ -29,7 +29,7 @@ ns.window:AddTab({
 		button:OnClick(function()
 			lookUp(container, ctx, input:GetText())
 		end)
-		container.title = ctx.ui:Text(container, 17, 'color.text.title')
+		container.title = ctx.ui:Text(container, 17, 'color.text.title', ns.Widgets.HEADING_FACE)
 		container.title:SetPoint('TOPLEFT', input, 'BOTTOMLEFT', -4, -16)
 		container.lines = ctx.ui:PagedLines(container, MAX_LINES, 13, LINES_WIDTH)
 		container.lines.frame:SetPoint('TOPLEFT', container.title, 'BOTTOMLEFT', 0, -8)

@@ -127,15 +127,13 @@ end
 -- Helpers ---------------------------------------------------------------------------------
 
 function sessionPoints()
-	local key = charKey(ns.wow:Player())
-	return key and ns.store:Session(key) or nil
+	local player = ns.wow:Player()
+	local key = charKey(player)
+	return key and ns.store:Session(key, player.server) or nil
 end
 
 function charKey(player)
-	if type(player) ~= 'table' or type(player.name) ~= 'string' or type(player.realm) ~= 'string' then
-		return nil
-	end
-	return player.name .. '-' .. player.realm
+	return ns.store and ns.store:CharacterKey(player) or nil
 end
 
 function isMode(mode)

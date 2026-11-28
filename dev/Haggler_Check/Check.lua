@@ -27,7 +27,8 @@ local addonName, ns = ...
 local Suite, Items = ns.Suite, ns.Items
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local indexItemsBySignal, signalNamesOf, manifestOf, readIdentity, registerWithConcord, forwardToConcord, safeCall
+local indexItemsBySignal, signalNamesOf, manifestOf, registerWithConcord, forwardToConcord, safeCall
+local realmForKey, nonEmpty
 local concordOf, concordVerdictOf, concordItemOf, clientEventsOf, hasOnAnswer, adoptStoredAnswers
 local indexItemsById, concordSuiteOf, concordLinkOf, answerMarkOf
 
@@ -187,7 +188,7 @@ function Check.boot(env)
 		end
 		loader:UnregisterEvent('ADDON_LOADED')
 		env.Haggler_CheckDB = type(env.Haggler_CheckDB) == 'table' and env.Haggler_CheckDB or {}
-		local checker = Check.create(env, env.Haggler_CheckDB, readIdentity(env))
+		local checker = Check.create(env, env.Haggler_CheckDB, Check.readIdentity(env))
 		local observer = ns.Observer.create(env, function(signal)
 			checker:Deliver(signal)
 		end)
@@ -250,16 +251,21 @@ function manifestOf(items)
 	return manifest
 end
 
--- Haggler's version and the client build key the run; the character keys sessions.
-function readIdentity(env)
+--- Haggler's version and the client build key the run; the character keys sessions, as Haggler's
+--- Store:CharacterKey makes it.
+--- @param env table _G
+--- @return table { version, build, charKey? }
+function Check.readIdentity(env)
 	local addOns = env.C_AddOns
 	local version = addOns and safeCall(addOns.GetAddOnMetadata, 'Haggler', 'Version') or '?'
 	local clientVersion, build = safeCall(env.GetBuildInfo)
-	local name, realm = safeCall(env.UnitName, 'player'), safeCall(env.GetRealmName)
+	-- UnitName's second value is not a realm on Forever (it carries a surname), so only the first.
+	local name = nonEmpty((safeCall(env.UnitName, 'player')))
+	local realm = realmForKey(env)
 	return {
 		version = version,
 		build = tostring(clientVersion or '?') .. '.' .. tostring(build or '?'),
-		charKey = name and realm and (name .. '-' .. realm) or nil,
+		charKey = name and realm and not name:find('-', 1, true) and (name .. '-' .. realm) or nil,
 	}
 end
 
@@ -427,6 +433,32 @@ function indexItemsById(items)
 		index[item.id] = item
 	end
 	return index
+end
+
+-- The realm part of Haggler's character key: the client's realm name, else the one Haggler
+-- remembered for this character (HagglerCharDB.realm), else the GUID's server number. Client
+-- 71037 gives no realm name; Haggler loads first (Dependencies) and has resolved it by then.
+function realmForKey(env)
+	local given = nonEmpty((safeCall(env.GetRealmName)))
+	if given then
+		return given
+	end
+	local charDb = env.HagglerCharDB
+	local remembered = type(charDb) == 'table' and nonEmpty(charDb.realm) or nil
+	if remembered then
+		return remembered
+	end
+	local guid = safeCall(env.UnitGUID, 'player')
+	local server = type(guid) == 'string' and tonumber(guid:match('^Player%-(%d+)%-')) or nil
+	return server and server > 0 and ('Server' .. server) or nil
+end
+
+function nonEmpty(value)
+	if type(value) ~= 'string' then
+		return nil
+	end
+	local trimmed = value:match('^%s*(.-)%s*$')
+	return trimmed ~= '' and trimmed or nil
 end
 
 function safeCall(fn, ...)
