@@ -17,8 +17,9 @@
 
 	Reading: the listing (often 50,000 to 150,000 rows) is read in slices, one per frame, each
 	within frameBudgetMs on the frame clock (or ROWS_PER_SLICE rows on a client without one), then
-	packed into items the same way, so the client never hitches. A repeated
-	REPLICATE_ITEM_LIST_UPDATE while a read runs is ignored: the client and other add-ons fire it
+	packed into items the same way (ITEMS_PER_SLICE items a slice without a clock, and as many
+	follow-up steps), so the client never hitches. A repeated REPLICATE_ITEM_LIST_UPDATE while a
+	read runs is ignored: the client and other add-ons fire it
 	again for the same listing, and restarting on each one never let a read finish. Each slice of
 	rows checks NumReplicateItems instead: if it fell to 0 the listing was cleared and the read is
 	dropped; if it changed, the read starts over on the new listing (from the first row, since a
@@ -353,7 +354,8 @@ function ScannerMethods:ScheduleSlice(job)
 end
 
 function ScannerMethods:RunSlice(job)
-	local shouldContinue = self:SliceBudget()
+	-- Without a clock, an item (packed, compared, archived) costs more than a row: fewer a slice.
+	local shouldContinue = self:SliceBudget(job.phase == 'rows' and Scan.ROWS_PER_SLICE or Scan.ITEMS_PER_SLICE)
 	if job.phase == 'rows' then
 		self:ReadRows(job, shouldContinue)
 	elseif job.phase == 'items' then
@@ -444,15 +446,16 @@ function ScannerMethods:CompleteJob(job, snapshot, followUpResult)
 	self:Guard('saving the scan', self.onSnapshot, snapshot, followUpResult)
 end
 
--- A shouldContinue for one slice: the frame clock budget, or a row count without a clock.
-function ScannerMethods:SliceBudget()
+-- A shouldContinue for one slice: the frame clock budget, or stepsWithoutClock calls without
+-- a clock.
+function ScannerMethods:SliceBudget(stepsWithoutClock)
 	local wow = self.wow
 	local startedMs = wow:ClockMs()
 	local calls = 0
 	if not startedMs then
 		return function()
 			calls = calls + 1
-			return calls <= Scan.ROWS_PER_SLICE
+			return calls <= stepsWithoutClock
 		end
 	end
 	local budgetMs = settingOr(self, 'frameBudgetMs', Scan.DEFAULT_FRAME_BUDGET_MS)

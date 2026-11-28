@@ -625,7 +625,10 @@ end
 --- Step 5's bookkeeping APIs: owned auctions, the mailbox, the merchant, destroying, crafting.
 --- game.owned = { { auctionID, itemKey, quantity, status } }; game.mail = { { subject, money,
 --- daysLeft, invoice = { type, itemName, bid, deposit, cut, count }, items = { { itemId, count } } } };
---- game.merchant = { [index] = { itemId, price, stack, hasExtendedCost } }; game.itemCounts;
+--- game.merchant = { [index] = { itemId, price, stack, hasExtendedCost, available?, costs? } }
+--- (costs = { { link, count } }, available nil for unlimited); game.merchantNpc = { guid, name,
+--- faction, reaction } is the merchant spoken to; game.merchantFilter, game.mapId, game.zone;
+--- game.itemCounts;
 --- game.schematics = { [recipeId] = schematic }, all learned unless game.unlearned[recipeId];
 --- game.cursorItem; game.isMerchantOpen.
 function addTrackingApi(game, env)
@@ -720,9 +723,52 @@ function addTrackingApi(game, env)
 	env.C_MerchantFrame = {
 		GetItemInfo = function(index)
 			local item = game.merchant[index]
-			return item and { price = item.price, stackCount = item.stack or 1, hasExtendedCost = item.hasExtendedCost }
+			if item and item.throws then
+				error('client error')
+			end
+			return item
+				and {
+					price = item.price,
+					stackCount = item.stack or 1,
+					numAvailable = item.available or -1,
+					hasExtendedCost = item.hasExtendedCost,
+				}
 		end,
 	}
+	env.GetMerchantNumItems = function()
+		return #game.merchant
+	end
+	env.GetMerchantItemLink = function(index)
+		local item = game.merchant[index]
+		return item and ('|cffffffff|Hitem:' .. item.itemId .. '::::|h[Item]|h|r') or nil
+	end
+	env.GetMerchantItemCostInfo = function(index)
+		local item = game.merchant[index]
+		return item and item.costs and #item.costs or 0
+	end
+	env.GetMerchantItemCostItem = function(index, costIndex)
+		local cost = game.merchant[index] and game.merchant[index].costs and game.merchant[index].costs[costIndex]
+		if cost then
+			return 'icon', cost.count, cost.link, cost.name
+		end
+	end
+	env.GetMerchantFilter = function()
+		return game.merchantFilter or 1
+	end
+	env.LE_LOOT_FILTER_ALL = 1
+	env.UnitReaction = function(unit, other)
+		if unit == 'npc' and other == 'player' and game.merchantNpc then
+			return game.merchantNpc.reaction
+		end
+	end
+	env.C_Map = {
+		GetBestMapForUnit = function(unit)
+			return unit == 'player' and game.mapId or nil
+		end,
+	}
+	env.GetRealZoneText = function()
+		return game.zone
+	end
 	env.MerchantFrame = FakeGame.newWidget('Frame', env.UIParent)
 	env.MerchantFrame:Hide()
 	env.C_Container.UseContainerItem = function(...)
@@ -947,6 +993,9 @@ function FakeGame.new(options)
 			game.acceptCount = game.acceptCount + 1
 		end,
 		UnitGUID = function(unit)
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.guid or nil
+			end
 			return unit == 'NPC' and game.partner and game.partner.guid or nil
 		end,
 		UnitIsInMyGuild = function(unit)
@@ -982,9 +1031,15 @@ function FakeGame.new(options)
 			if unit == 'NPC' then
 				return game.partner and game.partner.name or nil
 			end
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.name or nil
+			end
 			return 'Eilu'
 		end,
-		UnitFactionGroup = function()
+		UnitFactionGroup = function(unit)
+			if unit == 'npc' then
+				return game.merchantNpc and game.merchantNpc.faction or nil
+			end
 			return 'Alliance'
 		end,
 		GetCurrentRegion = function()
@@ -1208,6 +1263,7 @@ FakeGame.FEATURE_FILES = {
 	'Features/Pricing.lua',
 	'Features/Value.lua',
 	'Features/Scan.lua',
+	'Features/Vendors.lua',
 	'Features/Tooltip/Tooltip.lua',
 	'Features/Bags/Bags.lua',
 	'Features/Trade/Trade.lua',
@@ -1350,10 +1406,13 @@ function FakeGame.startAddon(t, game, beforeStart)
 	for _, path in ipairs(FakeGame.FEATURE_FILES) do
 		assert(loadfile(path))('Haggler', ns)
 	end
-	-- game.savedDb / game.savedCharDb carry saved variables across a simulated /reload.
+	-- game.savedDb / game.savedCharDb / game.savedArchiveDb carry saved variables across a simulated /reload.
 	game.savedDb = game.savedDb or {}
 	game.savedCharDb = game.savedCharDb or {}
+	game.savedArchiveDb = game.savedArchiveDb or {}
 	ns.store = assert(ns.Store.open(game.savedDb, game.savedCharDb))
+	ns.archiveDb = ns.ScanArchive.open(game.savedArchiveDb)
+	ns.vendorDb = ns.VendorStore.open(game.savedArchiveDb)
 	if beforeStart then
 		beforeStart(ns)
 	end

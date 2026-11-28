@@ -6,6 +6,10 @@
 	adds the units sold to the daily summaries (Engine/Sales.lua). Each save also sorts held
 	units whose vendor price is now known, keeps the summaries to the sales window, and drops
 	the scans of markets not scanned for keepMarketDays.
+	Each saved scan also goes into the scan history (Engine/ScanArchive.lua, HagglerArchiveDB),
+	built in the same follow-up and kept to its own size budget; the stale-market drop does not
+	touch it. Nothing in it leaves the machine. A failing history never fails the scan: its
+	problem shows in /hag scan status as a scan history problem.
 	Switching it off stops listening and drops a read in progress.
 
 	Every C_AuctionHouse.ReplicateItems call, by any add-on, is recorded through a post-hook and
@@ -20,14 +24,17 @@
 local _, ns = ...
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local newScanner, newSalesDiff, saveSnapshot, runScanCommand, statusLines, playerMarket, vendorPriceOf
+local newScanner, newFollowUp, newSalesDiff, newArchiveBuilder, newCombinedFollowUp, saveSnapshot, archiveSnapshot
+local runScanCommand, statusLines, archiveLine, playerMarket, vendorPriceOf
 local tidySavedScans, installRequestHook, recordRequest, lastRequestedAt, savedRequestAt
 
 -- A saved request time this far ahead of the clock is a clock that ran ahead (or a hand edit),
 -- not a request: it is ignored, then replaced, instead of blocking requests until that time.
 local REQUEST_CLOCK_TOLERANCE = 60
 
-local scanner
+local scanner, scanModule
+-- The newest scan history problem this session; nil when the last archive step worked.
+local archiveState = { lastError = nil }
 -- requestedAt: the newest request seen this session, kept while the market is not known yet.
 local requests = { isHooked = false, requestedAt = nil }
 
@@ -85,9 +92,24 @@ ns.host.AddModule({
 			min = 1,
 			max = 365,
 		},
+		{
+			key = 'archive',
+			type = 'toggle',
+			label = 'Keep a history of your own scans on this computer, for a future Haggler price network (nothing is sent)',
+			default = true,
+		},
+		{
+			key = 'archiveMaxMB',
+			type = 'slider',
+			label = 'Megabytes the scan history may use; the oldest scans go first',
+			default = ns.ScanArchive.DEFAULT_MAX_MB,
+			min = 4,
+			max = 128,
+		},
 	},
 	onEnable = function(module)
 		installRequestHook()
+		scanModule = module
 		scanner = newScanner(module)
 		scanner:Enable()
 		module:AddCommand('scan', {
@@ -116,9 +138,11 @@ function newScanner(module)
 			return snapshot and snapshot.at
 		end,
 		lastRequestedAt = lastRequestedAt,
-		newFollowUp = newSalesDiff,
-		onSnapshot = function(snapshot, salesDiff)
-			saveSnapshot(module, snapshot, salesDiff)
+		newFollowUp = function(snapshot)
+			return newFollowUp(module, snapshot)
+		end,
+		onSnapshot = function(snapshot, followUpResult)
+			saveSnapshot(module, snapshot, followUpResult)
 		end,
 		settings = function()
 			return {
@@ -169,6 +193,16 @@ function savedRequestAt(market, now)
 	return saved
 end
 
+-- The work run on a new snapshot before it is saved: the sales diff and the archive entry.
+function newFollowUp(module, snapshot)
+	local salesDiff = newSalesDiff(snapshot)
+	local archiveBuilder = module:Setting('archive') and newArchiveBuilder(snapshot) or nil
+	if not salesDiff and not archiveBuilder then
+		return nil
+	end
+	return newCombinedFollowUp(salesDiff, archiveBuilder)
+end
+
 -- The comparison with the market's last scan, or nil when there is nothing to compare.
 function newSalesDiff(snapshot)
 	local market = playerMarket()
@@ -178,7 +212,55 @@ function newSalesDiff(snapshot)
 	return ns.Sales.newDiff(ns.ScanStore.latest(market), snapshot, vendorPriceOf)
 end
 
-function saveSnapshot(module, snapshot, salesDiff)
+function newArchiveBuilder(snapshot)
+	if not ns.archiveDb then
+		return nil
+	end
+	return ns.ScanArchive.newEntryBuilder(snapshot)
+end
+
+-- Runs the sales diff, then the archive builder, a slice at a time. A failing archive builder
+-- costs only the archive entry (kept in archiveState), and the sales diff still counts. A
+-- failing sales diff fails the whole follow-up, so it costs the archive entry too; the scanner
+-- reports it and the scan is still saved.
+function newCombinedFollowUp(salesDiff, archiveBuilder)
+	local combined = { salesDiff = salesDiff, archiveBuilder = archiveBuilder }
+	function combined:Step(shouldContinue)
+		if self.salesDiff and not self.isSalesDone then
+			self.isSalesDone = self.salesDiff:Step(shouldContinue)
+			if not self.isSalesDone then
+				return false
+			end
+		end
+		if self.archiveBuilder then
+			local ok, isDoneOrError = pcall(self.archiveBuilder.Step, self.archiveBuilder, shouldContinue)
+			if not ok then
+				self.archiveBuilder = nil
+				self.archiveError = isDoneOrError
+				return true
+			end
+			return isDoneOrError
+		end
+		return true
+	end
+	function combined:Result()
+		local archiveEntry = nil
+		if self.archiveBuilder then
+			local ok, entryOrError = pcall(self.archiveBuilder.Result, self.archiveBuilder)
+			archiveEntry = ok and entryOrError or nil
+			self.archiveError = not ok and entryOrError or self.archiveError
+		end
+		return {
+			salesDiff = self.salesDiff and self.salesDiff:Result() or nil,
+			archiveEntry = archiveEntry,
+			archiveError = self.archiveError,
+		}
+	end
+	return combined
+end
+
+function saveSnapshot(module, snapshot, followUpResult)
+	local salesDiff = followUpResult and followUpResult.salesDiff
 	local market, marketKey = playerMarket()
 	if not market then
 		error('the market is not known yet (no faction)')
@@ -194,6 +276,14 @@ function saveSnapshot(module, snapshot, salesDiff)
 		ns.Sales.record(market.scanDays, salesDiff)
 	end
 	tidySavedScans(module, market, snapshot.at)
+	local archiveError = followUpResult and followUpResult.archiveError
+	if archiveError ~= nil then
+		archiveState.lastError = 'building the entry failed: ' .. tostring(archiveError)
+	else
+		local ok, err =
+			pcall(archiveSnapshot, module, marketKey, followUpResult and followUpResult.archiveEntry, snapshot.at)
+		archiveState.lastError = not ok and ('saving failed: ' .. tostring(err)) or nil
+	end
 	module:Send('SCAN_READY', marketKey, { at = snapshot.at, source = snapshot.source, count = snapshot.count })
 end
 
@@ -203,6 +293,15 @@ function tidySavedScans(module, market, now)
 	local salesSettings = ns.prices and ns.prices:SalesSettings()
 	ns.Sales.prune(market.scanDays, now, salesSettings and salesSettings.windowDays)
 	ns.ScanStore.pruneStaleMarkets(ns.store:Markets(), now, module:Setting('keepMarketDays'))
+end
+
+-- Adds the scan to the history and keeps the history to its budget.
+function archiveSnapshot(module, marketKey, archiveEntry, now)
+	if not ns.archiveDb or not archiveEntry or not module:Setting('archive') then
+		return
+	end
+	ns.ScanArchive.record(ns.archiveDb, marketKey, archiveEntry)
+	ns.ScanArchive.prune(ns.archiveDb, now, { maxBytes = module:Setting('archiveMaxMB') * ns.ScanArchive.BYTES_PER_MB })
 end
 
 function vendorPriceOf(itemId)
@@ -241,5 +340,24 @@ function statusLines(status)
 	if status.lastError then
 		lines[#lines + 1] = 'Last problem: ' .. status.lastError
 	end
+	lines[#lines + 1] = archiveLine()
+	if archiveState.lastError then
+		lines[#lines + 1] = 'Scan history problem: ' .. archiveState.lastError
+	end
 	return lines
+end
+
+function archiveLine()
+	if not ns.archiveDb then
+		return 'Scan history: not kept (saved by a newer Haggler)'
+	end
+	local summary = ns.ScanArchive.summary(ns.archiveDb)
+	local maxMB = scanModule and scanModule:Setting('archiveMaxMB')
+	return string.format(
+		'Scan history: %d scan%s, %.1f of %d MB',
+		summary.scans,
+		summary.scans == 1 and '' or 's',
+		summary.bytes / ns.ScanArchive.BYTES_PER_MB,
+		maxMB or ns.ScanArchive.DEFAULT_MAX_MB
+	)
 end

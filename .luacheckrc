@@ -15,6 +15,7 @@ exclude_files = {
 globals = {
 	'HagglerDB',
 	'HagglerCharDB',
+	'HagglerArchiveDB',
 	'SlashCmdList',
 	'SLASH_HAGGLER1',
 }

@@ -37,7 +37,8 @@
 	more price levels than were kept.
 
 	Sales keeps the daily summaries (market.scanDays); see Engine/Sales.lua. Markets not scanned
-	for keepMarketDays lose their scan and summaries (pruneStaleMarkets).
+	for keepMarketDays lose their scan and summaries (pruneStaleMarkets). The history of saved
+	scans lives apart, with its own retention; see Engine/ScanArchive.lua.
 ]]
 local _, ns = ...
 
