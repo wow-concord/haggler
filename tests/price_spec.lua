@@ -125,6 +125,7 @@ t.test('junk from saved scans and the client is unknown, never an error', functi
 	t.eq(facts.vendor, nil)
 	t.eq(facts.maxStack, nil)
 	t.eq(facts.lowestListed, 95, 'the AHledger lowest stands in for a junk scan minimum')
+	t.eq(facts.lowestListedSource, 'ahledger')
 	t.eq(facts.salesPerDay, 45)
 	t.eq(facts.typicalPrice, 125, 'the 30-day median')
 	t.eq(facts.recentPrice, 118, 'the 7-day median')
@@ -163,12 +164,33 @@ t.test('facts give ages and depth from the sources', function()
 		levels = snapshot.items[LINEN].levels,
 		levelCount = 2,
 		lowestListed = 90,
+		lowestListedSource = 'scan',
 		typicalPrice = 125,
 		recentPrice = 118,
 		scanAge = 120,
 		rowAge = 3 * 3600,
 	})
 	t.same(PriceContext.facts(ctx, SWORD), {})
+end)
+
+t.test("a scan without this item: the lowest listing is AHledger's, with its row age, never the scan's", function()
+	local snapshot = { at = NOW - 120, items = { [LINEN] = { min = 90, units = 45, levels = {} } } }
+	local ctx =
+		PriceContext.build({ now = NOW, marketKey = MARKET, priceSource = sourceWithTable(), snapshot = snapshot })
+	local facts = PriceContext.facts(ctx, WOOL)
+	t.eq(facts.lowestListed, 280)
+	t.eq(facts.lowestListedSource, 'ahledger')
+	t.eq(facts.scanAge, nil, 'the item is not in the scan, so the scan has no age for it')
+	t.eq(facts.rowAge, 3 * 3600)
+end)
+
+t.test("an item in the scan without a minimum: the lowest listing is AHledger's", function()
+	local snapshot = { at = NOW - 120, items = { [WOOL] = { units = 0, levels = {} } } }
+	local ctx =
+		PriceContext.build({ now = NOW, marketKey = MARKET, priceSource = sourceWithTable(), snapshot = snapshot })
+	local facts = PriceContext.facts(ctx, WOOL)
+	t.eq(facts.lowestListed, 280)
+	t.eq(facts.lowestListedSource, 'ahledger')
 end)
 
 t.test('build needs now', function()

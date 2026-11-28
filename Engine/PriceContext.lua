@@ -21,9 +21,12 @@
 	market than Haggler's, ctx.marketMismatch = { sourceMarket, marketKey }.
 
 	facts(ctx, itemId) reads the same sources for display: salesPerDay, salesSource, listedUnits,
-	levelCount, lowestListed, typicalPrice (the 30-day median), recentPrice (the 7-day median),
-	vendor, scanAge, rowAge. A value
-	that is not a finite number reads as nil.
+	levelCount, lowestListed, lowestListedSource, typicalPrice (the 30-day median), recentPrice
+	(the 7-day median), vendor, scanAge, rowAge. A value that is not a finite number reads as nil.
+	lowestListed is the item's own scan minimum when the scan has one, else AHledger's lowest
+	buyout; lowestListedSource says which ('scan' or 'ahledger'), so a display shows the age of
+	the data it came from (scanAge or rowAge), never the scan's age for an AHledger figure.
+	scanAge is the age of the scan that holds this item, nil when the item is not in it.
 ]]
 local _, ns = ...
 
@@ -71,9 +74,8 @@ end
 --- Facts about one item for display; every field may be nil.
 --- @param ctx table from build
 --- @param itemId number
---- @return table { salesPerDay, listedUnits, levelCount, lowestListed, typicalPrice, recentPrice, vendor,
----   scanAge, rowAge,
----   maxStack }
+--- @return table { salesPerDay, listedUnits, levelCount, lowestListed, lowestListedSource, typicalPrice,
+---   recentPrice, vendor, scanAge, rowAge, maxStack }
 function PriceContext.facts(ctx, itemId)
 	local row, updated = callSource(ctx.priceRow, itemId)
 	row = type(row) == 'table' and row or nil
@@ -84,13 +86,17 @@ function PriceContext.facts(ctx, itemId)
 	local levels = scanItem and type(scanItem.levels) == 'table' and scanItem.levels or nil
 	local sales = callSource(ctx.sales, itemId)
 	sales = type(sales) == 'table' and sales or { perDay = row and row.sold }
+	local scanLowest = finiteOrNil(scanItem and scanItem.min)
+	local rowLowest = finiteOrNil(row and row.min)
+	local lowestListedSource = scanLowest and 'scan' or (rowLowest and 'ahledger' or nil)
 	return {
 		salesPerDay = finiteOrNil(sales.perDay),
 		salesSource = finiteOrNil(sales.perDay) and sales.source or nil,
 		listedUnits = finiteOrNil(scanItem and scanItem.units),
 		levels = levels,
 		levelCount = levels and #levels or nil,
-		lowestListed = finiteOrNil(scanItem and scanItem.min) or finiteOrNil(row and row.min),
+		lowestListed = scanLowest or rowLowest,
+		lowestListedSource = lowestListedSource,
 		typicalPrice = finiteOrNil(row and row.m30),
 		recentPrice = finiteOrNil(row and row.m7),
 		vendor = finiteOrNil(info and info.vendorPrice),

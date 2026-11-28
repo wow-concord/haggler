@@ -40,7 +40,7 @@ PriceService.REALIZED_DAYS = 30
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local isItemId, ageOrNil, safeCall, rememberVendorPrice, scheduleItemRequests, sendQueuedItemRequests
-local usesPriceSource, realizedLookup, readItemInfo
+local realizedLookup, readItemInfo
 
 local ServiceMethods = {}
 ServiceMethods.__index = ServiceMethods
@@ -255,8 +255,7 @@ end
 --- Everything a tooltip shows for one item, from one context.
 --- @param itemId number
 --- @param ruleIds string[] rules to price, in order
---- @return table { prices = { { ruleId, name, isDefault, price?, reason? }... }, facts, ages,
----   credit? } credit only when a price used the source's figures
+--- @return table { prices = { { ruleId, name, isDefault, price?, reason? }... }, facts, ages }
 function ServiceMethods:Quote(itemId, ruleIds)
 	local ctx = self:Context()
 	local store = self.options.store
@@ -277,7 +276,6 @@ function ServiceMethods:Quote(itemId, ruleIds)
 		prices = prices,
 		facts = ns.PriceContext.facts(ctx, itemId),
 		ages = self:Ages(ctx.now),
-		credit = usesPriceSource(prices) and ctx.sourceStatus and ctx.sourceStatus.credit or nil,
 	}
 end
 
@@ -325,15 +323,6 @@ function ageOrNil(now, at)
 		return nil
 	end
 	return math.max(0, now - at)
-end
-
-function usesPriceSource(prices)
-	for _, entry in ipairs(prices) do
-		if entry.price and entry.price.usesPriceSource then
-			return true
-		end
-	end
-	return false
 end
 
 function rememberVendorPrice(store, itemId, copper)

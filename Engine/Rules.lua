@@ -21,8 +21,11 @@
 	AHledger's lowest buyout. A step whose base has no data is skipped and noted in the trace; only
 	a missing base fails the rule. The engine never throws on data, only on a broken call.
 
-	evaluate(rule, itemId, ctx) returns Price = { copper, ageSeconds, source, step, confidence,
-	trace }, or nil and a reason. The copper is snapped down to the item's price grid (see
+	evaluate(rule, itemId, ctx) returns Price = { copper, ageSeconds, source, baseAgeSeconds,
+	rowAgeSeconds?, step, confidence, trace }, or nil and a reason. ageSeconds is the oldest input
+	(it sets confidence); source and baseAgeSeconds are the base's own; rowAgeSeconds is the age
+	of the AHledger row a step read (a cap at the median, say), nil when no step read one, so a
+	display never dates one source with another's age. The copper is snapped down to the item's price grid (see
 	ItemMarket), except that a floor or higher bound is snapped up: a price never goes under its
 	floor. A floor stays in force for every later step, so a later undercut or cap clamps at it;
 	when that overrides a cap, the trace and confidence (capOverridden) say so.
@@ -37,8 +40,9 @@
 	but AHledger answered from the player's own scan), marketMismatch (info, level high: AHledger
 	uses another market) and whatever ctx.sales adds (ownSalesThin, trollBuys).
 
-	A Price also says whether any AHledger figure went into it (usesPriceSource), so the credit
-	shows only with prices that used AHledger, and which inputs it actually read (inputs, a set):
+	A Price also says whether any AHledger figure went into it (usesPriceSource), so the window
+	footer shows the credit only with prices that used AHledger (the options panel always shows
+	it, the tooltip never), and which inputs it actually read (inputs, a set):
 	  ahledger (any AHledger figure: a row base, its lowest buyout, its sold a day) · scan (the
 	  player's own scan depth) · ownSales (the player's own sales a day) · vendor · craftCost ·
 	  realized
@@ -76,6 +80,8 @@ Rules.DEFAULT_DEPTH_UNITS = 5
 Rules.DEFAULT_DEPTH_HOURS = 1
 Rules.MINUTES_PER_DAY = 1440
 Rules.HOURS_PER_DAY = 24
+-- The one line a tooltip shows for a rule that fails validation.
+Rules.UNUSABLE_RULE = "This rule can't be used"
 
 -- Confidence thresholds. The two ages are player settings (see confidenceSettings).
 Rules.CONFIDENCE = {
@@ -94,6 +100,19 @@ local ROW_FIELD_BY_BASE = {
 	low30 = 'lo',
 	high30 = 'hi',
 }
+-- Player-facing names of the fixed bases (listing bases with settings are phrased in describeBase).
+local BASE_NAMES = {
+	median = 'AHledger median',
+	median7 = 'AHledger 7-day median',
+	median30 = 'AHledger 30-day median',
+	low30 = 'AHledger 30-day low',
+	high30 = 'AHledger 30-day high',
+	lowest = 'lowest scan price',
+	vendor = 'vendor price',
+	craftCost = 'craft cost',
+	realized = 'your sale price',
+}
+local MISSING_BASE_TEXT = { realized = 'no sales of yours' }
 local LISTING_BASES = { lowest = true, firstWithUnits = true, afterPercent = true }
 local OTHER_BASES = { vendor = true, craftCost = true, realized = true }
 local STEP_KINDS = { cap = true, floor = true, lower = true, higher = true, multiply = true, undercut = true }
@@ -264,7 +283,7 @@ end
 --- @param itemId number
 --- @param ctx table see the file header
 --- @return table|nil Price { copper, ageSeconds, source, step, confidence, trace }
---- @return string|nil reason 'invalid rule: ...', or why the base has no price
+--- @return string|nil reason Rules.UNUSABLE_RULE for a rule that fails validation, or why the base has no price
 function Rules.evaluate(rule, itemId, ctx)
 	if type(itemId) ~= 'number' then
 		error('Rules.evaluate: itemId must be a number', 2)
@@ -272,9 +291,10 @@ function Rules.evaluate(rule, itemId, ctx)
 	if type(ctx) ~= 'table' or type(ctx.now) ~= 'number' then
 		error('Rules.evaluate: ctx needs now', 2)
 	end
-	local isValid, problem = Rules.validate(rule)
+	local isValid = Rules.validate(rule)
 	if not isValid then
-		return nil, 'invalid rule: ' .. problem
+		-- The reason reaches the tooltip; Rules.validate keeps the detail for the editor and store.
+		return nil, Rules.UNUSABLE_RULE
 	end
 	local trace = {}
 	local facts = {}
@@ -283,14 +303,20 @@ function Rules.evaluate(rule, itemId, ctx)
 		return nil, age
 	end
 	local ageSeconds = age
+	local baseAgeSeconds = age
+	local rowAgeSeconds = nil
 	-- A floor (or higher bound) stays in force for every later step: nothing takes the price
 	-- under it, not even a later cap or undercut.
 	local floorCopper = nil
 	local ceilingCopper = nil
 	for _, step in ipairs(rule.steps) do
-		local stepped, stepAge, lowerBound, upperBound = applyStep(step, copper, rule, itemId, ctx, trace, facts)
+		local stepped, stepAge, lowerBound, upperBound, stepSource =
+			applyStep(step, copper, rule, itemId, ctx, trace, facts)
 		copper = stepped
 		ageSeconds = olderOf(ageSeconds, stepAge)
+		if stepSource == 'ahledger' then
+			rowAgeSeconds = olderOf(rowAgeSeconds, stepAge)
+		end
 		floorCopper = lowerBound and math.max(floorCopper or 0, lowerBound) or floorCopper
 		ceilingCopper = upperBound and math.min(ceilingCopper or math.huge, upperBound) or ceilingCopper
 		if floorCopper and copper < floorCopper then
@@ -315,12 +341,14 @@ function Rules.evaluate(rule, itemId, ctx)
 	local confidence = assessConfidence(facts, ageSeconds, market, ctx)
 	for _, reason in ipairs(confidence.reasons) do
 		trace[#trace + 1] =
-			{ kind = 'confidence', label = string.format('%s confidence: %s', reason.level, reason.text) }
+			{ kind = 'confidence', label = string.format('%s confidence, %s', reason.level, reason.text) }
 	end
 	return {
 		copper = snapped,
 		ageSeconds = ageSeconds,
 		source = source,
+		baseAgeSeconds = baseAgeSeconds,
+		rowAgeSeconds = rowAgeSeconds,
 		step = market.step,
 		confidence = confidence,
 		trace = trace,
@@ -343,30 +371,30 @@ function resolveBase(base, rule, itemId, ctx, trace, facts)
 end
 
 function resolveRowBase(base, itemId, ctx, trace, facts)
-	local row, updated, problem = lookup(ctx.priceRow, itemId, facts, 'AHledger row')
+	local row, updated, problem = lookup(ctx.priceRow, itemId, facts, 'AHledger data')
 	noteRowProblem(facts, problem)
 	row = tableOrNil(row)
 	local field = ROW_FIELD_BY_BASE[base.kind]
 	local copper, isJunk = readCopper(row and row[field])
 	if isJunk then
-		noteBadInput(facts, 'AHledger ' .. field)
-		return nil, string.format('AHledger %s is not a number', describeBase(base))
+		noteBadInput(facts, describeBase(base))
+		return nil, describeBase(base) .. ' is not a number'
 	end
 	if not copper then
-		return nil, string.format('no AHledger %s', describeBase(base))
+		return nil, 'no ' .. describeBase(base)
 	end
 	recordSales(facts, row, ctx, itemId)
 	noteSourceFigure(facts, row)
-	trace[#trace + 1] = { kind = 'base', label = 'AHledger ' .. describeBase(base), copper = copper }
+	trace[#trace + 1] = { kind = 'base', label = describeBase(base), copper = copper }
 	return copper, ageSince(ctx, updated), 'ahledger'
 end
 
 function resolveListingBase(base, rule, itemId, ctx, trace, facts)
-	local scanItem, scannedAt = lookup(ctx.scanItem, itemId, facts, 'scan')
+	local scanItem, scannedAt = lookup(ctx.scanItem, itemId, facts, 'the scan')
 	if type(scanItem) == 'table' and scanItem.isMalformed == true then
 		noteBadInput(facts, 'saved scan of this item')
 	end
-	local row, updated, problem = lookup(ctx.priceRow, itemId, facts, 'AHledger row')
+	local row, updated, problem = lookup(ctx.priceRow, itemId, facts, 'AHledger data')
 	noteRowProblem(facts, problem)
 	row = tableOrNil(row)
 	recordSales(facts, row, ctx, itemId)
@@ -377,20 +405,20 @@ function resolveListingBase(base, rule, itemId, ctx, trace, facts)
 		if skipped > 0 then
 			trace[#trace + 1] = {
 				kind = 'antiBait',
-				label = isAllBait and string.format('all %d units are bait; dearest level kept', skipped)
+				label = isAllBait and string.format('all %d units are bait, dearest level kept', skipped)
 					or string.format('%d bait units passed over', skipped),
 			}
 		end
 		local copper, isThin = readListing(base, levels, soldPerDay)
-		local note = isThin and ' (listing too thin; dearest level)' or ''
-		trace[#trace + 1] = { kind = 'base', label = 'scan ' .. describeBase(base) .. note, copper = copper }
+		local note = isThin and ' (listing too thin, dearest level)' or ''
+		trace[#trace + 1] = { kind = 'base', label = describeBase(base) .. note, copper = copper }
 		recordListing(facts, sumUnits(listed), skipped, isAllBait, isThin)
 		noteInput(facts, 'scan')
 		return copper, ageSince(ctx, scannedAt), 'scan'
 	end
 	local lowest, isJunk = readCopper(row and row.min)
 	if isJunk then
-		noteBadInput(facts, 'AHledger min')
+		noteBadInput(facts, 'AHledger lowest buyout')
 		return nil, 'AHledger lowest buyout is not a number'
 	end
 	if not lowest then
@@ -425,7 +453,7 @@ function resolveOtherBase(base, itemId, ctx, trace, facts)
 		return nil, describeBase(base) .. ' is not a number'
 	end
 	if not copper or copper <= 0 then
-		return nil, 'no ' .. describeBase(base)
+		return nil, MISSING_BASE_TEXT[base.kind] or ('no ' .. describeBase(base))
 	end
 	trace[#trace + 1] = { kind = 'base', label = describeBase(base), copper = copper }
 	noteInput(facts, base.kind)
@@ -463,7 +491,8 @@ end
 -- Steps -----------------------------------------------------------------------------------
 
 -- Returns the new copper, the age of any base the step read (nil when none), for floor and
--- higher the lower bound the price must not go under, and for cap and lower the upper bound.
+-- higher the lower bound the price must not go under, for cap and lower the upper bound, and
+-- the source of the base the step read.
 function applyStep(step, copper, rule, itemId, ctx, trace, facts)
 	local kind = step.kind
 	if kind == 'multiply' then
@@ -478,9 +507,9 @@ function applyStep(step, copper, rule, itemId, ctx, trace, facts)
 		return result
 	end
 	local stepTrace = {}
-	local other, age = resolveBase(step.base, rule, itemId, ctx, stepTrace, facts)
+	local other, age, source = resolveBase(step.base, rule, itemId, ctx, stepTrace, facts)
 	if not other then
-		trace[#trace + 1] = { kind = 'skip', label = string.format('%s skipped: %s', kind, age) }
+		trace[#trace + 1] = { kind = 'skip', label = string.format('%s skipped, %s', kind, age) }
 		return copper
 	end
 	local limit = other
@@ -495,7 +524,7 @@ function applyStep(step, copper, rule, itemId, ctx, trace, facts)
 		label = string.format('%s at%s %s', kind, percentText, describeBase(step.base)),
 		copper = result,
 	}
-	return result, age, (not isUpperBound) and limit or nil, isUpperBound and limit or nil
+	return result, age, (not isUpperBound) and limit or nil, isUpperBound and limit or nil, source
 end
 
 -- Confidence ------------------------------------------------------------------------------
@@ -863,15 +892,15 @@ end
 
 function describeBase(base)
 	if base.kind == 'firstWithUnits' and base.hours and base.hours > 0 then
-		return string.format('first price with %d units or %s hours of sales', base.n, tostring(base.hours))
+		return string.format('scan first price with %d units or %s hours of sales', base.n, tostring(base.hours))
 	end
 	if base.kind == 'firstWithUnits' then
-		return string.format('first price with %d units', base.n)
+		return string.format('scan first price with %d units', base.n)
 	end
 	if base.kind == 'afterPercent' then
-		return string.format('price after the cheapest %s%%', tostring(base.percent))
+		return string.format('scan price after the cheapest %s%%', tostring(base.percent))
 	end
-	return base.kind
+	return BASE_NAMES[base.kind] or 'this price'
 end
 
 function isPositiveInteger(value)
@@ -903,7 +932,7 @@ function lookup(source, itemId, facts, what)
 	local ok, value, at, extra = pcall(source, itemId)
 	if not ok then
 		if facts then
-			noteBadInput(facts, what .. ' source')
+			noteBadInput(facts, what)
 		end
 		return nil
 	end

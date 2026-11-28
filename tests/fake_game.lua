@@ -849,9 +849,29 @@ function FakeGame.addSettingsApi(game)
 			registered.openedId = id
 		end,
 	}
-	game.env.CreateSettingsButtonInitializer = function(name, buttonText, onClick, tooltip, addSearchTags)
-		return { name = name, buttonText = buttonText, onClick = onClick, tooltip = tooltip, tags = addSearchTags }
+	-- Like the client's, an initializer keeps its data in a table that GetData hands out and the
+	-- row reads when it is drawn.
+	local function initializerWith(kind, data)
+		return {
+			kind = kind,
+			data = data,
+			GetData = function(self)
+				return self.data
+			end,
+		}
 	end
+	game.env.CreateSettingsButtonInitializer = function(name, buttonText, onClick, tooltip, addSearchTags)
+		return initializerWith(
+			'button',
+			{ name = name, buttonText = buttonText, buttonClick = onClick, tooltip = tooltip, tags = addSearchTags }
+		)
+	end
+	game.env.CreateSettingsListSectionHeaderInitializer = function(name, tooltip)
+		return initializerWith('sectionHeader', { name = name, tooltip = tooltip })
+	end
+	-- The Settings window starts closed, as in the client.
+	game.env.SettingsPanel = FakeGame.newWidget('Frame')
+	game.env.SettingsPanel.isShown = false
 end
 
 function FakeGame.new(options)

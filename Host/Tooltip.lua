@@ -8,6 +8,7 @@
 	  tooltips:RemoveProvider(owner)
 	  info = { stackCount, location? = { bag, slot }, modifiers = { shift, ctrl, alt } }
 	  Line = { left, right?, color?, rightColor?, wrap?, textSize?, indent? }   colours { r, g, b }
+	       | { kind = 'separator' }   a rule between two sections of the block
 	  textSize = 'small': both columns in the client's small tooltip font (GameTooltipTextSmall)
 	  indent   = UI units before the left text, drawn as Haggler's transparent spacer texture
 
@@ -23,7 +24,9 @@
 	add-on adds lines, so the closing line is added with the block, collapsed to '', and every
 	Show of the tooltip settles it: no line after it, no rule; a blank line after it carries the
 	rule; any other line opens it up to ' ' with its own rule. A tooltip without OnTooltipCleared
-	gets the lines but no separators, since its rules could outlive their lines.
+	gets the lines but no separators, since its rules could outlive their lines. A separator
+	line inside the block is a ' ' line with its own rule, the same token, height and pixel
+	snapping as the outer two; on a tooltip without separators it draws nothing.
 
 	Small lines: the client keeps a line's font object until someone sets another, through
 	clears and reuse (its own AH buy dialog sets and restores GameTooltipTextLeft1 by hand). So
@@ -40,6 +43,7 @@ local Tooltip = {}
 ns.Tooltip = Tooltip
 
 Tooltip.HOOK_OWNER = 'host'
+Tooltip.SEPARATOR_KIND = 'separator'
 local WHITE = { r = 1, g = 1, b = 1 }
 local SEPARATOR_TEXT = ' '
 local COLLAPSED_TEXT = ''
@@ -62,7 +66,7 @@ local SPACER_TEXTURE = 'Interface\\AddOns\\Haggler\\media\\spacer.png'
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local drawLine, isUsableLine, isBlankText, canDrawSeparators, releaseSeparators, ruleOffset, restoreFonts
-local indentedText, isRestylable, restoreFont
+local indentedText, isRestylable, restoreFont, withoutStraySeparators
 
 local TooltipMethods = {}
 TooltipMethods.__index = TooltipMethods
@@ -129,7 +133,7 @@ function TooltipMethods:Lines(itemId, info)
 			end
 		end
 	end
-	return lines
+	return withoutStraySeparators(lines)
 end
 
 --- Draws the providers' lines on a tooltip; shows it again only when lines were added.
@@ -158,9 +162,15 @@ function TooltipMethods:Render(tooltip, itemId, stackCount, location)
 		self:AddSeparatorAbove(tooltip, separators)
 	end
 	for _, line in ipairs(lines) do
-		drawLine(tooltip, line)
-		if separators and line.textSize == 'small' then
-			self:SetSmallFont(tooltip, separators, tooltip:NumLines(), line)
+		if line.kind == Tooltip.SEPARATOR_KIND then
+			if separators then
+				self:AddSectionSeparator(tooltip, separators)
+			end
+		else
+			drawLine(tooltip, line)
+			if separators and line.textSize == 'small' then
+				self:SetSmallFont(tooltip, separators, tooltip:NumLines(), line)
+			end
 		end
 	end
 	if separators then
@@ -242,6 +252,14 @@ function TooltipMethods:AddSeparatorAbove(tooltip, separators)
 	end
 	local rule = self:AcquireRule(tooltip, separators)
 	self:PlaceRule(tooltip, rule, index)
+	rule:Show()
+end
+
+--- A rule between two sections of the block, on a ' ' line of its own.
+function TooltipMethods:AddSectionSeparator(tooltip, separators)
+	tooltip:AddLine(SEPARATOR_TEXT, WHITE.r, WHITE.g, WHITE.b, false)
+	local rule = self:AcquireRule(tooltip, separators)
+	self:PlaceRule(tooltip, rule, tooltip:NumLines())
 	rule:Show()
 end
 
@@ -440,7 +458,26 @@ function indentedText(text, indent)
 end
 
 function isUsableLine(line)
-	return type(line) == 'table' and type(line.left) == 'string'
+	return type(line) == 'table' and (type(line.left) == 'string' or line.kind == Tooltip.SEPARATOR_KIND)
+end
+
+-- A separator only between two text lines: leading, trailing and doubled ones go, and a list of
+-- separators alone is no lines at all.
+function withoutStraySeparators(lines)
+	local kept = {}
+	local hasPendingSeparator = false
+	for _, line in ipairs(lines) do
+		if line.kind == Tooltip.SEPARATOR_KIND then
+			hasPendingSeparator = #kept > 0
+		else
+			if hasPendingSeparator then
+				kept[#kept + 1] = { kind = Tooltip.SEPARATOR_KIND }
+				hasPendingSeparator = false
+			end
+			kept[#kept + 1] = line
+		end
+	end
+	return kept
 end
 
 function isBlankText(text)

@@ -334,14 +334,6 @@ t.test('forItem: a wait needs a gain over the vendor of at least a whole copper'
 	t.eq(copper.gainOverVendor, 1, 'floored to whole copper')
 end)
 
-t.test('forItem: a wait carries its gain a unit too, floored', function()
-	local stack = itemValue({ count = 20, lowestListed = 6800, vendorNet = 20 * 100, typicalAhNet = 20 * 9500 + 7 })
-	local advice = Advice.forItem(stack)
-	t.eq(advice.gainOverVendor, 20 * 9400 + 7)
-	t.eq(advice.gainOverVendorEach, 9400)
-	t.eq(Advice.forItem(itemValue({ lowestListed = 6800 })).gainOverVendorEach, 9400, 'one unit: the same')
-end)
-
 t.test('forItem: a wait with no vendor price gains the whole net at the usual price', function()
 	local advice = Advice.forItem(itemValue({ lowestListed = 4000, vendorNet = false, typicalAhNet = 9500 }))
 	t.eq(advice.decision, 'wait')

@@ -95,7 +95,7 @@ ns.host.AddModule({
 		{
 			key = 'archive',
 			type = 'toggle',
-			label = 'Keep a history of your own scans on this computer, for a future Haggler price network (nothing is sent)',
+			label = 'Keep a history of your own scans on this computer for a future Haggler price network. Nothing is sent.',
 			default = true,
 		},
 		{

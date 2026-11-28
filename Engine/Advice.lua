@@ -10,7 +10,7 @@
 	  Advice.isMarketLow(lowest, typical) -> boolean
 
 	BagAdvice = { decision = 'post'|'sell'|'wait'|'undecided', code, underTypicalPercent?,
-	              gainOverVendor?, gainOverVendorEach?, recentUnderTypicalPercent? }, checked in this order:
+	              gainOverVendor?, recentUnderTypicalPercent? }, checked in this order:
 	  undecided  the value is a guess (low or no confidence: lowConfidence) or nothing pays
 	             (noPrice)
 	  wait       the lowest listing is WAIT_UNDER_TYPICAL_PERCENT or more under the 30-day median
@@ -22,8 +22,7 @@
 	             measures the AH (Value's typicalAhNet: the cut, the deposit and the sell chance)
 	             (marketLow). A wait carries its reason: underTypicalPercent, the whole percent the
 	             lowest listing is under the median, and gainOverVendor, whole copper the stack
-	             nets at the median over the vendor (typicalAhNet - vendorNet, at least 1 to wait),
-	             with gainOverVendorEach the same a unit (floored)
+	             nets at the median over the vendor (typicalAhNet - vendorNet, at least 1 to wait)
 	  post       the AH nets more than the vendor (ah), as Value's opportunity picks it
 	  sell       the vendor pays at least as much (vendor)
 	Past undecided, recentUnderTypicalPercent (whole percent the 7-day median is under the
@@ -65,7 +64,7 @@ Advice.WAIT_TREND_FALL_PERCENT = 10
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local hold, relist, confidenceOf, isFinitePositive, isFiniteNonNegative, percentApart, claimPendingPost
-local isWorthWaiting, vendorNetOf, gainOverVendorOf, unitsOf, recentUnderTypicalPercentOf, withTrend
+local isWorthWaiting, vendorNetOf, gainOverVendorOf, recentUnderTypicalPercentOf, withTrend
 
 --- Advice for one listed auction.
 --- @param auction table see the file header
@@ -166,7 +165,6 @@ function Advice.forItem(value, item)
 			code = 'marketLow',
 			underTypicalPercent = percentApart(value.typicalPrice, value.lowestListed),
 			gainOverVendor = gainOverVendorOf(value),
-			gainOverVendorEach = math.floor(gainOverVendorOf(value) / unitsOf(value)),
 		}, recentUnder)
 	end
 	if value.source == 'ah' then
@@ -294,10 +292,6 @@ end
 -- What listing the stack at the usual price nets over the vendor, in whole copper.
 function gainOverVendorOf(value)
 	return math.floor(value.typicalAhNet - vendorNetOf(value))
-end
-
-function unitsOf(value)
-	return isFinitePositive(value.count) and math.floor(value.count) >= 1 and math.floor(value.count) or 1
 end
 
 -- The vendor net of the stack; nothing when the vendor pays nothing or the value is unreadable.

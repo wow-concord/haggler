@@ -34,7 +34,7 @@
 	at 1 and again at 2. It is solid, a dark edge that keeps the glyph readable on any item icon,
 	with a footprint of 16. The copies at 2 alone would leave a pixel of the item art showing
 	between a thin stroke and its outline; the ring at 1 fills it. While the client shows its junk coin or upgrade arrow on a button
-	(both top left), the decision badge stays off it; the tooltip's Decision line still names it.
+	(both top left), the decision badge stays off it; the tooltip's Signal line still names it.
 	A badge is retextured only when its icon or colour changes.
 
 	Taint: overlay textures and font strings are created on the host's button (allowed in and out

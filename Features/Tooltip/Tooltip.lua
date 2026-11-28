@@ -1,24 +1,30 @@
 --[[
 	Tooltip: Haggler's lines on item tooltips (TooltipLines builds them). Compact by default:
-	one line per shown rule and the data age; the unit price while Shift is held. The detail
-	block shows always, on a modifier, or never. A gamepad modifier works through the client's
-	GamePadEmulateShift / Ctrl / Alt mapping. Holding or letting go of a modifier redraws the
-	tooltip at once. Over a bag slot it also names Haggler's decision for the item
-	(Advice.forItem) with the decision glyph, and for a Wait the reason under it. The line stands on its own: it shows where the
-	badge does not (its setting off, the client's junk coin in that corner, junk the type badge
-	already marks). Switching the module off removes its lines and its event.
+	a Buy section (what a vendor charges, from VendorPrices, and the lowest listing a unit) and a Sell section (the default rule's price a
+	unit and for the stack), each with its data age. The detail block shows always, on a
+	modifier, or never. A gamepad modifier works through the client's GamePadEmulateShift /
+	Ctrl / Alt mapping. Holding or letting go of a modifier redraws the tooltip at once; the detail
+	block also opens the Vendor row's details. ns.TooltipFeature.vendorError keeps the first
+	vendor price lookup failure (ns.Tooltip is the host's tooltip class, never this). Over a
+	bag slot the Sell section also names Haggler's decision for the item (Advice.forItem) as its
+	Signal, with the decision glyph, and for a Wait the reason under the prices. The line stands
+	on its own: it shows where the badge does not (its setting off, the client's junk coin in
+	that corner, junk the type badge already marks). Switching the module off removes its lines
+	and its event.
 ]]
 local _, ns = ...
 
+local TooltipFeature = {}
+ns.TooltipFeature = TooltipFeature
+
 -- Helpers live at the bottom of the file; declared here so they stay local.
-local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons
+local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons, vendorBuyPrice
 -- The icon set the decision glyph comes from, made on first use.
 local icons
 
 local MODULE_KEY = 'tooltip'
-local UNIT_VIEW_MODIFIER = 'shift'
-local DETAIL_TOGGLES =
-	{ 'detailTrace', 'detailSales', 'detailListings', 'detailVendor', 'detailSellTime', 'sellTimeNote' }
+-- Saved detailSellTime and sellTimeNote values from earlier versions are ignored.
+local DETAIL_TOGGLES = { 'detailTrace', 'detailSales', 'detailListings', 'detailVendor', 'detailVendorInfo' }
 
 local function toggle(key, label)
 	return { key = key, type = 'toggle', label = label, default = true }
@@ -53,9 +59,8 @@ ns.host.AddModule({
 		toggle('detailTrace', 'Detail: how the default rule got its price'),
 		toggle('detailSales', 'Detail: units sold a day'),
 		toggle('detailListings', 'Detail: units and prices listed in the last scan'),
-		toggle('detailVendor', 'Detail: vendor price'),
-		toggle('detailSellTime', 'Detail: estimated sell time'),
-		toggle('sellTimeNote', 'Note under the sell time that it is an estimate from sales per day'),
+		toggle('detailVendor', 'Detail: vendor pays'),
+		toggle('detailVendorInfo', 'Detail: vendor details'),
 	},
 	onEnable = function(module)
 		ns.tooltips:AddProvider(MODULE_KEY, function(itemId, info)
@@ -82,13 +87,28 @@ function buildLines(module, itemId, info)
 	return ns.TooltipLines.build({
 		quote = prices:Quote(itemId, ns.store:ShownRules('tooltip')),
 		stackCount = info.stackCount,
-		isUnitView = modifiers[UNIT_VIEW_MODIFIER] == true,
 		isDetail = isDetailShown(module, modifiers),
 		options = detailOptions(module),
 		theme = ns.theme,
 		advice = bagAdvice(itemId, info),
 		icons = tooltipIcons(),
+		vendorBuy = vendorBuyPrice(itemId),
 	})
+end
+
+-- What a vendor charges. ns.vendorPrices is nil while the Vendor prices module is off; a lookup
+-- that fails drops only the Vendor row, and its first error is kept, never printed.
+function vendorBuyPrice(itemId)
+	local prices = ns.vendorPrices
+	if not prices then
+		return nil
+	end
+	local isOk, result = pcall(prices.BuyPrice, prices, itemId)
+	if not isOk then
+		TooltipFeature.vendorError = TooltipFeature.vendorError or tostring(result)
+		return nil
+	end
+	return result
 end
 
 -- Advice.forItem's BagAdvice for the bag slot under the tooltip; nil elsewhere.

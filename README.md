@@ -49,7 +49,7 @@ Haggler also keeps a history of its own scans (`HagglerArchiveDB`, `Engine/ScanA
 - When AHledger only has the copy bundled with the add-on (`snapshot`), prices carry a confidence reason, as old data does.
 - The client does not load Haggler without AHledger. When AHledger is there but Haggler cannot use it (an API version Haggler does not read), Haggler says once in chat that it needs AHledger. When AHledger's calls fail or it has no prices for the player's market, prices come from Haggler's own scans with low confidence, and the reason is shown.
 - When AHledger is set to another market than the one the player is on, Haggler keeps its own market, says so once in chat, and AHledger prices carry a note.
-- The tooltip closes with AHledger's credit line when a price shown used AHledger's figures.
+- AHledger's credit line (`AHledgerAPI.CREDIT`) shows in Haggler's options panel under Settings → AddOns and in the Haggler window footer, never in item tooltips. The crafting view and the TOC (`## X-Credit`) keep theirs.
 
 ## Development
 

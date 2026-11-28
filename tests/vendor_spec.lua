@@ -819,6 +819,25 @@ t.test('/hag vendors reports the record and the seed', function()
 	)
 end)
 
+t.test('/hag vendors says when the tooltip could not read vendor prices, never the raw error', function()
+	local game = merchantGame()
+	local addon = FakeGame.startAddon(t, game)
+	t.eq(#addon.host.RunCommand('vendors'), 2, 'no failure, no line')
+	addon.vendorPrices = {
+		BuyPrice = function()
+			error('vendor store broke at line 12')
+		end,
+	}
+	game:ShowItemTooltip(THREAD)
+	local lines = addon.host.RunCommand('vendors')
+	t.eq(#lines, 3)
+	t.eq(lines[3], "The tooltip couldn't read vendor prices this session")
+	for _, line in ipairs(lines) do
+		t.eq(line:find('broke', 1, true), nil, line)
+	end
+	t.same(addon.errors, {})
+end)
+
 t.test('Questie is read only to confirm, guarded', function()
 	local game = merchantGame()
 	local wow = ns.Wow.create(game.env)

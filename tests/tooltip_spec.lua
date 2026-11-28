@@ -15,6 +15,11 @@ local coins = FakeGame.coins
 local LOW_ICON = icons:Inline('triangle-alert', 0, 'color.state.caution')
 local MEDIUM_ICON = icons:Inline('triangle-alert', 0, 'color.state.warning')
 local INFO_ICON = icons:Inline('info', 0, 'color.text.muted')
+local CART_ICON = icons:Inline('shopping-cart', 0, 'color.text.accent')
+local SEARCH_ICON = icons:Inline('search', 0, 'color.text.muted')
+local PLUG_ICON = icons:Inline('plug', 0, 'color.text.muted')
+-- How texts() writes a separator line between two sections.
+local SEPARATOR = '---'
 
 -- The module icon the TOC's IconTexture names, inline at the line's own text height (0).
 local function tocIconTexture()
@@ -30,8 +35,9 @@ local HEADER_ICON = '|T' .. tocIconTexture() .. ':0|t'
 local function price(copper, level, reasons, trace)
 	return {
 		copper = copper,
-		ageSeconds = 60,
-		source = 'scan',
+		ageSeconds = 3 * 3600,
+		baseAgeSeconds = 3 * 3600,
+		source = 'ahledger',
 		step = 1,
 		confidence = { level = level or 'high', reasons = reasons or {} },
 		trace = trace or { { kind = 'base', label = 'scan lowest', copper = copper } },
@@ -51,6 +57,9 @@ local function quote(options)
 			levelCount = 2,
 			levels = { { price = 90, qty = 20 }, { price = 99, qty = 40 } },
 			lowestListed = 90,
+			lowestListedSource = 'scan',
+			scanAge = 12 * 60,
+			rowAge = 5 * 3600,
 			vendor = 13,
 		},
 		ages = options.ages or { scanAge = 12 * 60, tableAge = 3 * 3600 },
@@ -67,7 +76,34 @@ end
 local function texts(lines)
 	local result = {}
 	for index, line in ipairs(lines) do
-		result[index] = line.right and (line.left .. ' | ' .. line.right) or line.left
+		if line.kind == TooltipLines.SEPARATOR then
+			result[index] = SEPARATOR
+		else
+			result[index] = line.right and (line.left .. ' | ' .. line.right) or line.left
+		end
+	end
+	return result
+end
+
+-- The index of the first line whose text holds text, or nil.
+local function indexOf(lines, text)
+	for index, line in ipairs(texts(lines)) do
+		if line:find(text, 1, true) then
+			return index
+		end
+	end
+	return nil
+end
+
+-- The Sell section: the lines after the last separator before the module icon header.
+local function sellLines(lines)
+	local first = indexOf(lines, HEADER_ICON)
+	local result = {}
+	for index = first or 1, #lines do
+		if lines[index].kind == TooltipLines.SEPARATOR then
+			break
+		end
+		result[#result + 1] = lines[index]
 	end
 	return result
 end
@@ -83,17 +119,264 @@ end
 
 t.group('tooltip lines')
 
-t.test('compact: the age header, then one line per rule with the stack price', function()
+t.test('compact: a Buy and a Sell section split by a separator, each under its icon and data age', function()
 	t.same(texts(build({ stackCount = 20 })), {
-		HEADER_ICON .. ' | scan 12 min · table 3 h',
-		'Realistic ×20 | ' .. coins('18s 80c'),
-		'Median ×20 | ' .. coins('24s'),
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		'Auction house (each) | ' .. coins('90c'),
+		SEPARATOR,
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price (each) | ' .. coins('94c'),
+		'Price × 20 | ' .. coins('18s 80c'),
 	})
 end)
 
-t.test('a single item shows no count; the unit view shows the price each', function()
-	t.same(texts(build({ stackCount = 1 }))[2], 'Realistic | ' .. coins('94c'))
-	t.same(texts(build({ stackCount = 20, isUnitView = true }))[2], 'Realistic (each) | ' .. coins('94c'))
+t.test('the headers name no source in words, only the icon and the age', function()
+	local lines = build({ stackCount = 20 })
+	for _, index in ipairs({ 1, 4 }) do
+		t.eq(lines[index].right:find('scan', 1, true), nil, lines[index].right)
+		t.eq(lines[index].right:find('table', 1, true), nil, lines[index].right)
+	end
+	t.same(lines[1].color, theme:Color('color.text.accent'))
+	t.same(lines[1].rightColor, theme:Color('color.text.muted'))
+end)
+
+t.test('a single item shows one Price line, no count', function()
+	t.same({ unpack(texts(build({ stackCount = 1 })), 4) }, {
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price | ' .. coins('94c'),
+	})
+end)
+
+t.test('the Buy section is one unit row from the lowest listing, never a total', function()
+	local lines = build({ stackCount = 20, quote = quote({ facts = { lowestListed = 1234, salesPerDay = 2 } }) })
+	t.eq(texts(lines)[2], 'Auction house (each) | ' .. coins('12s 34c'))
+	t.same(lines[2].color, theme:Color('color.text.secondary'))
+	t.same(lines[2].rightColor, theme:Color('color.text.primary'))
+end)
+
+t.test('no listing: the Buy section and its separator are left out', function()
+	t.same(texts(build({ stackCount = 20, quote = quote({ facts = { salesPerDay = 2 } }) })), {
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price (each) | ' .. coins('94c'),
+		'Price × 20 | ' .. coins('18s 80c'),
+	})
+end)
+
+t.test('a vendor buy price heads the Buy section under the store icon, with no age of its own', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local lines = build({ stackCount = 20, vendorBuy = { price = 40, stackPrice = 40, stack = 1, source = 'seed' } })
+	t.same({ unpack(texts(lines), 1, 3) }, {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		storeIcon .. ' Vendor (each) | ' .. coins('40c'),
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	t.same(lines[2].color, theme:Color('color.text.secondary'))
+	t.same(lines[2].rightColor, theme:Color('color.text.primary'))
+end)
+
+t.test('a vendor price alone keeps the Buy section, its header without an age', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local lines = build({
+		quote = quote({ facts = { salesPerDay = 2, rowAge = 3600 } }),
+		vendorBuy = { price = 40, stackPrice = 40, stack = 1, source = 'seen' },
+	})
+	t.same({ unpack(texts(lines), 1, 3) }, { CART_ICON, storeIcon .. ' Vendor (each) | ' .. coins('40c'), SEPARATOR })
+end)
+
+t.test('items a vendor sells in stacks read the stack price, never a rounded unit', function()
+	local storeIcon = icons:Inline('store', 0, 'color.text.secondary')
+	local arrows = { price = 0.5, stackPrice = 100, stack = 200, source = 'seed' }
+	t.eq(texts(build({ vendorBuy = arrows }))[2], storeIcon .. ' Vendor × 200 | ' .. coins('1s'))
+end)
+
+t.test('no vendor buy price, or none worth a copper figure: no Vendor row', function()
+	for _, vendorBuy in ipairs({ false, { price = 0, stackPrice = 0, stack = 1 }, { price = 0 / 0, stack = 1 } }) do
+		t.eq(find(build({ vendorBuy = vendorBuy or nil }), 'Vendor (each)'), nil)
+	end
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	local plain = build({ icons = bare, vendorBuy = { price = 40, stackPrice = 40, stack = 1 } })
+	t.eq(texts(plain)[2], 'Vendor (each) | ' .. coins('40c'), 'without the atlas the row reads its word alone')
+end)
+
+local PERCENT_ICON = icons:Inline('badge-percent', 0, 'color.text.muted')
+local STORE_ICON = icons:Inline('store', 0, 'color.text.secondary')
+local DISCOUNTED_READ = {
+	price = 40,
+	stackPrice = 40,
+	stack = 1,
+	source = 'seen',
+	vendorCount = 1,
+	isBasePrice = false,
+	isLimited = true,
+	ageSeconds = 3 * 86400,
+	cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 6, priceFromBase = false },
+}
+-- Vendor details show with the detail block only. These options switch the detail section's
+-- own rows off, the Vendor pays line too. The Buy vendor details have their own option
+-- (detailVendorInfo), left at its default, on.
+local VENDOR_ONLY = {
+	detailTrace = false,
+	detailSales = false,
+	detailListings = false,
+	detailVendor = false,
+}
+
+-- The Buy section's lines, header first, as texts.
+local function buyTexts(lines)
+	local result = {}
+	for _, text in ipairs(texts(lines)) do
+		if text == SEPARATOR then
+			break
+		end
+		result[#result + 1] = text
+	end
+	return result
+end
+
+t.test('a discounted vendor price carries the discount icon, and no details without the detail block', function()
+	t.same(buyTexts(build({ vendorBuy = DISCOUNTED_READ })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Auction house (each) | ' .. coins('90c'),
+	})
+end)
+
+t.test('the detail block adds who sold it, the standing it was read at, its age and limited stock', function()
+	local lines = build({ vendorBuy = DISCOUNTED_READ, isDetail = true, options = VENDOR_ONLY })
+	t.same(buyTexts(lines), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Sold by | Gina Lang',
+		'Standing | Honored',
+		'Read | 3 d ago',
+		'Limited stock',
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	for index = 3, 6 do
+		t.eq(lines[index].textSize, 'small', texts(lines)[index])
+		t.same(lines[index].color, theme:Color('color.text.muted'))
+	end
+end)
+
+t.test('a full vendor price shows no icon; the detail block adds its read, never a seed price', function()
+	local fullRead = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		vendorCount = 1,
+		isBasePrice = true,
+		isLimited = false,
+		ageSeconds = 2 * 3600,
+		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 4, priceFromBase = false },
+	}
+	t.same(buyTexts(build({ vendorBuy = fullRead }))[2], STORE_ICON .. ' Vendor (each) | ' .. coins('40c'))
+	t.same(buyTexts(build({ vendorBuy = fullRead, isDetail = true, options = VENDOR_ONLY })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c'),
+		'Sold by | Gina Lang',
+		'Standing | Neutral',
+		'Read | 2 h ago',
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	local seedOnly = {
+		price = 0.5,
+		stackPrice = 100,
+		stack = 200,
+		source = 'seed',
+		vendorCount = 0,
+		isLimited = false,
+		isBasePrice = true,
+	}
+	t.same(buyTexts(build({ vendorBuy = seedOnly, isDetail = true, options = VENDOR_ONLY })), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor × 200 | ' .. coins('1s'),
+		'Auction house (each) | ' .. coins('90c'),
+	}, 'a seed price has no vendor, standing or read to show')
+	local unknownStanding = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		vendorCount = 1,
+		isLimited = false,
+		isBasePrice = false,
+		cheapestVendor = { npcId = 7, reaction = 99, priceFromBase = false },
+	}
+	t.eq(find(build({ vendorBuy = unknownStanding, isDetail = true }), 'Standing'), nil, 'never a raw number')
+end)
+
+t.test('a price kept from an earlier base read leaves the standing out', function()
+	local keptBase = {
+		price = 40,
+		stackPrice = 40,
+		stack = 1,
+		source = 'seen',
+		vendorCount = 1,
+		isLimited = false,
+		isBasePrice = true,
+		ageSeconds = 600,
+		cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 8, priceFromBase = true },
+	}
+	local lines = build({ vendorBuy = keptBase, isDetail = true, options = VENDOR_ONLY })
+	t.eq(find(lines, 'Standing'), nil, 'the latest read was Exalted, the price is not from it')
+	t.truthy(find(lines, 'Sold by | Gina Lang'))
+end)
+
+t.test('with the detail block the Buy vendor price and the vendor pays line stand apart', function()
+	local lines = build({
+		stackCount = 20,
+		vendorBuy = DISCOUNTED_READ,
+		isDetail = true,
+		options = { detailTrace = false, detailSales = false, detailListings = false },
+	})
+	t.truthy(find(lines, STORE_ICON .. ' Vendor (each) | ' .. coins('40c')), 'what a vendor charges')
+	t.truthy(find(lines, 'Vendor pays × 20 | ' .. coins('2s 60c')), 'what a vendor pays, in the detail block')
+	t.truthy(find(build({ stackCount = 1, isDetail = true, options = { detailTrace = false } }), 'Vendor pays | '))
+end)
+
+t.test('the vendor details setting hides the Buy detail rows; Vendor pays keeps its own setting', function()
+	local options = { detailTrace = false, detailVendorInfo = false }
+	local lines = build({ stackCount = 20, vendorBuy = DISCOUNTED_READ, isDetail = true, options = options })
+	t.same(buyTexts(lines), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	t.truthy(find(lines, 'Vendor pays × 20 | ' .. coins('2s 60c')), 'detailVendor still on')
+	local payOff = build({ vendorBuy = DISCOUNTED_READ, isDetail = true, options = { detailVendor = false } })
+	t.truthy(find(payOff, 'Sold by | Gina Lang'), 'detailVendor leaves the vendor details alone')
+	t.truthy(find(payOff, 'Limited stock'))
+	t.eq(find(payOff, 'Vendor pays'), nil)
+end)
+
+t.test('without the icon atlas the discount reads as a word', function()
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	t.eq(
+		texts(build({ icons = bare, vendorBuy = DISCOUNTED_READ }))[2],
+		'Vendor (each) | ' .. coins('40c') .. ' Discounted'
+	)
+end)
+
+t.test('other shown rules move to the detail view', function()
+	t.eq(find(build({ stackCount = 20 }), 'Median'), nil, 'compact: the default rule only')
+	local detailed = build({ stackCount = 20, isDetail = true, options = { detailTrace = false } })
+	t.eq(find(detailed, 'Median'), 'Median × 20 | ' .. coins('24s'))
+	local separatorIndex = 7
+	t.eq(texts(detailed)[separatorIndex], SEPARATOR, 'the detail block has its own separator after Sell')
+	t.eq(texts(detailed)[separatorIndex + 1], 'Median × 20 | ' .. coins('24s'))
+end)
+
+t.test('no Shift unit view: Shift changes nothing but the detail block', function()
+	t.same(texts(build({ stackCount = 20, isUnitView = true })), texts(build({ stackCount = 20 })))
 end)
 
 t.test('low confidence is marked on the line itself; medium is not', function()
@@ -104,10 +387,21 @@ t.test('low confidence is marked on the line itself; medium is not', function()
 				{ ruleId = 'median', name = 'Median', isDefault = false, price = price(120, 'medium') },
 			},
 		}),
+		stackCount = 20,
 	})
-	t.eq(lines[2].right, coins('94c') .. ' ' .. LOW_ICON, 'the caution triangle, no text mark')
-	t.eq(lines[3].left, 'Low confidence', 'the word goes on its own line below')
-	t.eq(lines[4].right, coins('1s 20c'), 'medium is not marked')
+	t.eq(lines[5].right, coins('94c') .. ' ' .. LOW_ICON, 'the caution triangle, no text mark')
+	t.eq(lines[6].right, coins('18s 80c'), 'once, on the first price row')
+	t.eq(lines[7].left, 'Low confidence', 'the word goes on its own line, last')
+	local detailed = build({
+		quote = quote({
+			prices = {
+				{ ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94, 'high') },
+				{ ruleId = 'median', name = 'Median', isDefault = false, price = price(120, 'medium') },
+			},
+		}),
+		isDetail = true,
+	})
+	t.eq(find(detailed, 'Median'), 'Median | ' .. coins('1s 20c'), 'medium is not marked')
 end)
 
 t.test('with the detail off, the top low reason wraps on its own line under the price', function()
@@ -118,13 +412,14 @@ t.test('with the detail off, the top low reason wraps on its own line under the 
 		prices = { { ruleId = 'minimum', name = 'Minimum', isDefault = true, price = price(24, 'low', reasons) } },
 	})
 	local lines = build({ quote = lowQuote, stackCount = 2 })
-	t.same(texts(lines), {
-		HEADER_ICON .. ' | scan 12 min · table 3 h',
-		'Minimum ×2 | ' .. coins('48c') .. ' ' .. LOW_ICON,
+	t.same(texts(sellLines(lines)), {
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price (each) | ' .. coins('24c') .. ' ' .. LOW_ICON,
+		'Price × 2 | ' .. coins('48c'),
 		'Low confidence, 81% of vanished units were troll buys and are left out',
 	})
-	t.eq(lines[3].wrap, true, 'wraps at the tooltip width instead of widening it')
-	t.same(lines[3].color, theme:Color('color.state.caution'))
+	t.eq(lines[#lines].wrap, true, 'wraps at the tooltip width instead of widening it')
+	t.same(lines[#lines].color, theme:Color('color.state.caution'))
 end)
 
 t.test('with the detail off, a low line names its top reason inline', function()
@@ -135,27 +430,114 @@ t.test('with the detail off, a low line names its top reason inline', function()
 	local lowQuote = quote({
 		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94, 'low', reasons) } },
 	})
-	t.same({ unpack(texts(build({ quote = lowQuote })), 2, 3) }, {
-		'Realistic | ' .. coins('94c') .. ' ' .. LOW_ICON,
+	t.same({ unpack(texts(build({ quote = lowQuote })), 5, 6) }, {
+		'Price | ' .. coins('94c') .. ' ' .. LOW_ICON,
 		'Low confidence, few sales',
 	})
 	local detailed = texts(build({ quote = lowQuote, isDetail = true, options = { detailTrace = false } }))
-	t.eq(detailed[2], 'Realistic | ' .. coins('94c') .. ' ' .. LOW_ICON)
-	t.eq(detailed[3], MEDIUM_ICON .. ' Medium confidence, scan is 3 h old', 'the detail block lists every reason')
+	t.eq(detailed[5], 'Price | ' .. coins('94c') .. ' ' .. LOW_ICON)
+	t.eq(detailed[6], SEPARATOR, 'the detail block replaces the short reason')
+	t.eq(detailed[7], MEDIUM_ICON .. ' Medium confidence, scan is 3 h old', 'the detail block lists every reason')
 end)
 
-t.test('a rule without a price says so', function()
+t.test('a rule without a price says so on one Price line', function()
 	local lines = build({
 		quote = quote({
 			prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, reason = 'no data' } },
 		}),
+		stackCount = 20,
 	})
-	t.eq(lines[2].right, 'no price')
+	t.same({ unpack(texts(lines), 5) }, { 'Price | no price' })
 end)
 
-t.test('missing data is named in the header', function()
-	local lines = build({ quote = quote({ ages = {} }) })
-	t.eq(lines[1].right, 'no scan · no table')
+t.test('Buy header: a listing from AHledger shows the plug and its row age, never the scan age', function()
+	local facts = { lowestListed = 280, lowestListedSource = 'ahledger', rowAge = 7200 }
+	local lines = build({ quote = quote({ facts = facts, ages = { scanAge = 60, tableAge = 600 } }) })
+	t.eq(lines[1].right, PLUG_ICON .. ' 2 h', 'a scan exists but this item is not in it')
+	t.eq(lines[2].right, coins('2s 80c'))
+end)
+
+t.test("Buy header: a listing from the scan shows the search icon and the item's own scan age", function()
+	local facts = { lowestListed = 90, lowestListedSource = 'scan', scanAge = 300, rowAge = 7200 }
+	local lines = build({ quote = quote({ facts = facts, ages = { scanAge = 60, tableAge = 600 } }) })
+	t.eq(lines[1].right, SEARCH_ICON .. ' 5 min')
+end)
+
+t.test("Sell header: the age of the price's own source, search for a scan, plug for AHledger", function()
+	local scanned = quote({
+		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94) } },
+	})
+	scanned.prices[1].price.source, scanned.prices[1].price.baseAgeSeconds = 'scan', 300
+	t.eq(build({ quote = scanned })[4].right, SEARCH_ICON .. ' 5 min')
+	t.eq(build({ quote = quote() })[4].right, PLUG_ICON .. ' 3 h')
+end)
+
+t.test('no age next to a source never reads no data: the icon stands alone, or nothing at all', function()
+	local noRowAge = build({ quote = quote({ facts = { lowestListed = 90, lowestListedSource = 'ahledger' } }) })
+	t.eq(noRowAge[1].right, PLUG_ICON)
+	local vendorPriced = quote()
+	vendorPriced.prices[1].price.source = 'vendor'
+	t.eq(build({ quote = vendorPriced })[4].right, nil, 'a vendor price has no market age')
+	local unpriced = build({
+		quote = quote({
+			prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, reason = 'no data' } },
+		}),
+	})
+	t.eq(unpriced[4].right, nil, 'no price, no age')
+	for _, line in ipairs(texts(build({ quote = quote({ ages = {} }) }))) do
+		t.eq(line:find('no data', 1, true), nil, line)
+	end
+end)
+
+-- A quote for linen priced by the real default rule, from a scan dated scannedAt (nil for a
+-- snapshot without a valid time) and an AHledger table two days old.
+local function realisticQuote(scannedAt)
+	local api = FakeGame.newAHledgerAPI({ market = MARKET, updated = NOW - 2 * 86400, rows = AHLEDGER_ROWS })
+	local ctx = ns.PriceContext.build({
+		now = NOW,
+		marketKey = MARKET,
+		priceSource = ns.PriceData.newAHledgerSource(function()
+			return api
+		end),
+		snapshot = {
+			at = scannedAt,
+			items = { [LINEN] = { min = 100, units = 40, levels = { { price = 100, qty = 40 } } } },
+		},
+	})
+	local defaultPrice = ns.Rules.evaluate(ns.Rules.builtIns().realistic, LINEN, ctx)
+	return {
+		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = defaultPrice } },
+		facts = ns.PriceContext.facts(ctx, LINEN),
+	}
+end
+
+t.test('an unknown scan time shows the search icon alone, never the AHledger age after it', function()
+	local lines = build({ quote = realisticQuote(nil) })
+	t.eq(lines[4].right, SEARCH_ICON .. ' ' .. PLUG_ICON .. ' 2 d', 'the median cap still dates AHledger by its row')
+	t.eq(build({ quote = realisticQuote(NOW - 300) })[4].right, SEARCH_ICON .. ' 5 min ' .. PLUG_ICON .. ' 2 d')
+end)
+
+t.test('without the icon atlas each age is named in words, so two ages never stand bare', function()
+	local bare = {
+		Inline = function()
+			return ''
+		end,
+	}
+	local lines = build({ quote = realisticQuote(NOW - 300), icons = bare })
+	t.eq(lines[1].left, TooltipLines.BUY_FALLBACK)
+	t.eq(lines[1].right, 'Scan 5 min')
+	t.eq(lines[4].right, 'Scan 5 min AHledger 2 d')
+	t.eq(build({ quote = realisticQuote(nil), icons = bare })[4].right, 'Scan AHledger 2 d')
+	t.eq(build({ quote = quote(), icons = bare })[4].right, 'AHledger 3 h')
+end)
+
+t.test('a vendor, craft cost or own-sales base with an AHledger step names its base before the row age', function()
+	for source, label in pairs({ vendor = 'Vendor pays', craft = 'Craft cost', realized = 'Your sales' }) do
+		local stepped = quote()
+		local stepPrice = stepped.prices[1].price
+		stepPrice.source, stepPrice.baseAgeSeconds, stepPrice.rowAgeSeconds = source, 0, 7200
+		t.eq(build({ quote = stepped })[4].right, label .. ' ' .. PLUG_ICON .. ' 2 h', source)
+	end
 end)
 
 t.test('an item Haggler knows nothing about gets no lines', function()
@@ -166,16 +548,16 @@ t.test('an item Haggler knows nothing about gets no lines', function()
 	t.same(build({ quote = unknown, isDetail = true }), {})
 end)
 
-t.test('detail: the trace, reasons, sales, listings, vendor and sell time with its note', function()
+t.test('detail: the trace, reasons, sales, listings and vendor pays, no sell time', function()
 	local reasons = {
 		{ code = 'stale', level = 'medium', text = 'AHledger data is 30 hours old' },
 	}
 	local trace = {
 		{ kind = 'base', label = 'scan first price with 5 units', copper = 99 },
-		{ kind = 'skip', label = 'cap skipped: no median' },
+		{ kind = 'skip', label = 'cap skipped, no median' },
 		{ kind = 'step', label = 'undercut by 1c', copper = 98 },
 		{ kind = 'snap', label = 'price step 1c', copper = 98 },
-		{ kind = 'confidence', label = 'medium confidence: AHledger data is 30 hours old' },
+		{ kind = 'confidence', label = 'medium confidence, AHledger data is 30 hours old' },
 	}
 	local detailed = quote({
 		prices = {
@@ -189,21 +571,25 @@ t.test('detail: the trace, reasons, sales, listings, vendor and sell time with i
 		},
 	})
 	t.same(texts(build({ quote = detailed, stackCount = 20, isDetail = true })), {
-		HEADER_ICON .. ' | scan 12 min · table 3 h',
-		'Realistic ×20 | ' .. coins('19s 60c'),
-		'Median ×20 | ' .. coins('24s') .. ' ' .. LOW_ICON,
-		'Realistic, each:',
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		'Auction house (each) | ' .. coins('90c'),
+		SEPARATOR,
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price (each) | ' .. coins('98c'),
+		'Price × 20 | ' .. coins('19s 60c'),
+		SEPARATOR,
+		'Median × 20 | ' .. coins('24s') .. ' ' .. LOW_ICON,
+		'Realistic (each)',
 		'  scan first price with 5 units | ' .. coins('99c'),
-		'  cap skipped: no median',
+		'  cap skipped, no median',
 		'  undercut by 1c | ' .. coins('98c'),
 		'  price step 1c | ' .. coins('98c'),
 		MEDIUM_ICON .. ' Medium confidence, AHledger data is 30 hours old',
-		LOW_ICON .. ' Median: low confidence, under 1 sale a day',
+		LOW_ICON .. ' Median, low confidence, under 1 sale a day',
 		'Sold a day | 45',
-		'Listed | 60 units · 2 prices',
-		'Vendor | ' .. coins('2s 60c'),
-		'Sell time | ~21 h', -- (20 listed under 98c + 20) / 45 a day
-		'  ' .. TooltipLines.SELL_TIME_NOTE,
+		'Listed | × 60',
+		'Price levels | 2',
+		'Vendor pays × 20 | ' .. coins('2s 60c'),
 	})
 end)
 
@@ -217,11 +603,14 @@ t.test('detail lines follow their settings; the reasons always show', function()
 		detailSales = false,
 		detailListings = false,
 		detailVendor = false,
-		detailSellTime = false,
 	}
 	t.same(texts(build({ quote = lowQuote, isDetail = true, options = options })), {
-		HEADER_ICON .. ' | scan 12 min · table 3 h',
-		'Realistic | ' .. coins('94c') .. ' ' .. LOW_ICON,
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		'Auction house (each) | ' .. coins('90c'),
+		SEPARATOR,
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Price | ' .. coins('94c') .. ' ' .. LOW_ICON,
+		SEPARATOR,
 		LOW_ICON .. ' Low confidence, old data',
 	})
 end)
@@ -236,16 +625,37 @@ t.test('detail lines that can grow long wrap at the tooltip width', function()
 		facts = { salesPerDay = 0.2, levels = {} },
 	})
 	local lines = build({ quote = lowQuote, isDetail = true, options = { detailTrace = false } })
-	for _, text in ipairs({ 'old data', 'no price, too few sales', 'under 1 sale a day', TooltipLines.SELL_TIME_NOTE }) do
+	for _, text in ipairs({ 'old data', 'no price, too few sales' }) do
 		local isFound = false
 		for _, line in ipairs(lines) do
-			if line.left:find(text, 1, true) then
+			if (line.left or ''):find(text, 1, true) then
 				isFound = true
 				t.eq(line.wrap, true, text)
 				t.eq(line.right, nil, text)
 			end
 		end
 		t.truthy(isFound, text)
+	end
+end)
+
+t.test('a rule that fails validation reads one plain line, no internal detail', function()
+	local brokenQuote = quote({
+		prices = {
+			{ ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94) },
+			{ ruleId = 'mine', name = 'Mine', isDefault = false, reason = ns.Rules.UNUSABLE_RULE },
+		},
+	})
+	local lefts = {}
+	for _, line in ipairs(build({ quote = brokenQuote, isDetail = true, options = { detailTrace = false } })) do
+		lefts[#lefts + 1] = line.left or ''
+	end
+	local joined = table.concat(lefts, ' / ')
+	t.truthy(joined:find("Mine can't be used", 1, true), joined)
+	t.eq(joined:find('no price, Mine', 1, true), nil)
+	t.eq(joined:find('invalid', 1, true), nil, joined)
+	for _, left in ipairs(lefts) do
+		local words = left:gsub('|T.-|t', '')
+		t.eq(words:find('[:;]'), nil, left)
 	end
 end)
 
@@ -261,49 +671,31 @@ end)
 t.test('the sales line says when sales a day is the own count', function()
 	local facts = { salesPerDay = 12.5, salesSource = 'own', listedUnits = 3, levelCount = 1 }
 	local lines = build({ isDetail = true, quote = quote({ facts = facts }) })
-	t.eq(find(lines, 'Sold a day'), 'Sold a day | 12.5 · own scans')
+	t.eq(find(lines, 'Sold a day'), 'Sold a day | 12.5')
+	t.eq(find(lines, 'Sales from'), 'Sales from | Own scans')
 end)
 
-t.test('the sell-time note can be switched off', function()
-	local lines = build({ isDetail = true, options = { sellTimeNote = false } })
-	t.truthy(find(lines, 'Sell time'))
-	t.eq(find(lines, TooltipLines.SELL_TIME_NOTE), nil)
+t.test('no sell time line, and saved sell time settings are ignored', function()
+	local slow = quote({ facts = { salesPerDay = 0.2, levels = {} } })
+	local options = { detailSellTime = true, sellTimeNote = true }
+	for _, lines in ipairs({ build({ isDetail = true, quote = slow }), build({ isDetail = true, options = options }) }) do
+		for _, text in ipairs(texts(lines)) do
+			t.eq(text:find('Sell time', 1, true), nil, text)
+			t.eq(text:find('under 1 sale a day', 1, true), nil, text)
+			t.eq(text:find('not in-game time', 1, true), nil, text)
+		end
+	end
+	t.eq(TooltipLines.sellTimeDays, nil)
+	t.eq(TooltipLines.SELL_TIME_NOTE, nil)
 end)
 
-t.test('without sales data the sell time is unknown and has no note', function()
+t.test('without sales data the sales line reads unknown', function()
 	local lines = build({
 		isDetail = true,
 		quote = quote({ facts = { listedUnits = 3, levelCount = 1, levels = { { price = 90, qty = 3 } } } }),
 	})
-	t.eq(find(lines, 'Sell time'), 'Sell time | unknown, no sales data')
 	t.eq(find(lines, 'Sold a day'), 'Sold a day | unknown')
-	t.eq(find(lines, TooltipLines.SELL_TIME_NOTE), nil)
 	t.eq(find(lines, 'Vendor'), nil)
-end)
-
-t.test('sell time counts the units at or under the price plus the stack', function()
-	local facts =
-		{ salesPerDay = 10, levels = { { price = 90, qty = 20 }, { price = 94, qty = 5 }, { price = 99, qty = 40 } } }
-	t.eq((TooltipLines.sellTimeDays(facts, 94, 5)), 3)
-	t.eq((TooltipLines.sellTimeDays(facts, 89, 5)), 0.5)
-	local days, isLow = TooltipLines.sellTimeDays({ salesPerDay = 0.5, levels = {} }, 94, 1)
-	t.eq(days, 2)
-	t.eq(isLow, true, 'under one sale a day')
-	t.eq(select(2, TooltipLines.sellTimeDays(facts, 94, 5)), false)
-	t.eq(TooltipLines.sellTimeDays({ salesPerDay = 0 }, 94, 1), nil)
-	t.eq(TooltipLines.sellTimeDays({ levels = { 'junk', { price = '1', qty = 2 } }, salesPerDay = 1 }, 94, 1), 1)
-end)
-
-t.test('a slow sell time is marked low, with the reason wrapped below', function()
-	local lines = build({ isDetail = true, quote = quote({ facts = { salesPerDay = 0.2, levels = {} } }) })
-	local texted = texts(lines)
-	for index, text in ipairs(texted) do
-		if text:find('Sell time', 1, true) then
-			t.eq(text, 'Sell time | ~5.0 days ' .. LOW_ICON)
-			t.eq(texted[index + 1], 'Low confidence, under 1 sale a day')
-		end
-	end
-	t.truthy(find(lines, 'Sell time'))
 end)
 
 t.test('money and ages read short', function()
@@ -741,6 +1133,64 @@ t.test('a separator goes above the block: a blank line with a 1px rule in the st
 	t.eq(rule.width, 220, 'the tooltip width less the line inset on both sides')
 end)
 
+t.test('a separator line between sections is a blank line with its own rule, like the outer ones', function()
+	local game, tooltips = newRegistry()
+	addOtherLines(game, { 'Linen Cloth' })
+	tooltips:AddProvider('haggler', function()
+		return {
+			{ left = 'Buy', right = '12 min' },
+			{ left = 'Auction house (each)', right = '90c' },
+			{ kind = 'separator' },
+			{ left = 'Haggler', right = '3 h' },
+			{ left = 'Price', right = '94c' },
+		}
+	end)
+	local tooltip = game.env.GameTooltip
+	game:ShowItemTooltip(LINEN)
+	t.same(leftTexts(tooltip), { 'Linen Cloth', ' ', 'Buy', 'Auction house (each)', ' ', 'Haggler', 'Price', '' })
+	t.same(shownRuleLines(game, tooltip), { 2, 5 })
+	local border = theme:Color('color.border.strong')
+	for _, rule in ipairs(tooltip.children) do
+		if rule.isShown then
+			t.same(rule.colorTexture, { border.r, border.g, border.b, border.a })
+			t.eq(rule.height, 1, 'border.hairline, a whole pixel')
+			t.eq(rule.width, 220, 'the same width as the outer rules')
+		end
+	end
+	game:ShowItemTooltip(LINEN)
+	t.same(shownRuleLines(game, tooltip), { 2, 5 }, 'a rebuild reuses the rules')
+end)
+
+t.test('leading, trailing and doubled separators collapse; only separators is no block at all', function()
+	local game, tooltips = newRegistry()
+	addOtherLines(game, { 'Linen Cloth' })
+	local sep = { kind = 'separator' }
+	tooltips:AddProvider('haggler', function()
+		return { sep, sep, { left = 'Buy' }, sep, sep, { left = 'Price' }, sep }
+	end)
+	local tooltip = game.env.GameTooltip
+	game:ShowItemTooltip(LINEN)
+	t.same(leftTexts(tooltip), { 'Linen Cloth', ' ', 'Buy', ' ', 'Price', '' })
+	t.same(shownRuleLines(game, tooltip), { 2, 4 })
+	local _, only = newRegistry()
+	only:AddProvider('haggler', function()
+		return { sep, sep }
+	end)
+	t.same(only:Lines(LINEN, { stackCount = 1 }), {}, 'separators alone are not a usable block')
+end)
+
+t.test('a tooltip without OnTooltipCleared draws no separator line between sections', function()
+	local game, tooltips = newRegistry()
+	game.env.GameTooltip.scriptNames.OnTooltipCleared = nil
+	tooltips:AddProvider('haggler', function()
+		return { { left = 'Buy' }, { kind = 'separator' }, { left = 'Price' } }
+	end)
+	local tooltip = game.env.GameTooltip
+	game:ShowItemTooltip(LINEN)
+	t.same(leftTexts(tooltip), { 'Buy', 'Price' })
+	t.eq(#tooltip.children, 0)
+end)
+
 t.test('no doubled separator: a blank line above the block gets the rule, its text untouched', function()
 	local game, tooltips = newRegistry()
 	addOtherLines(game, { 'Linen Cloth', ' ' })
@@ -1028,45 +1478,150 @@ local function startWithTable(options)
 	return game, FakeGame.startAddon(t, game)
 end
 
-t.test('item tooltips get the header and the default rule; a modifier change redraws', function()
+t.test('item tooltips get the Buy and Sell sections, no credit; a modifier change redraws', function()
 	local game, addon = startWithTable()
 	local lines = game:ShowItemTooltip(LINEN)
-	t.eq(lines[1].left, HEADER_ICON)
-	t.eq(lines[1].right, 'no scan · table 2 h')
-	t.eq(lines[2].left, 'Realistic')
-	t.eq(lines[3].left, 'Prices from AHledger (ahledger.com)', 'the credit closes the block')
-	t.eq(lines[4].left, '', 'then the closing separator, collapsed as the last line')
-	t.eq(#lines, 4)
+	t.eq(lines[1].left, CART_ICON)
+	t.eq(lines[1].right, PLUG_ICON .. ' 2 h', 'no scan: the listing is the price source figure')
+	t.eq(lines[2].left, 'Auction house (each)')
+	t.eq(lines[3].left, ' ', 'the separator line between the sections')
+	t.eq(lines[4].left, HEADER_ICON)
+	t.eq(lines[4].right, PLUG_ICON .. ' 2 h')
+	t.eq(lines[5].left, 'Price')
+	t.eq(lines[6].left, '', 'then the closing separator, collapsed as the last line')
+	t.eq(#lines, 6, 'no credit line')
 	game.modifiers.shift = true
 	game:Fire('MODIFIER_STATE_CHANGED', 'LSHIFT', 1)
 	t.eq(game.env.GameTooltip.refreshed, 1)
 	local detailed = game.env.GameTooltip.lines
-	t.eq(detailed[2].left, 'Realistic (each)')
-	t.truthy(#detailed > 4, 'Shift shows the detail block too')
+	t.eq(detailed[5].left, 'Price', 'Shift no longer switches to a unit view')
+	t.truthy(#detailed > 6, 'Shift shows the detail block')
 	t.same(addon.errors, {})
+end)
+
+t.test('the Buy section reads what a vendor charges from VendorPrices, and nothing with vendors off', function()
+	local game, addon = startWithTable()
+	local asked = {}
+	addon.vendorPrices = {
+		BuyPrice = function(_, itemId)
+			asked[#asked + 1] = itemId
+			return { price = 40, stackPrice = 40, stack = 1, source = 'seen' }
+		end,
+	}
+	local lines = game:ShowItemTooltip(LINEN)
+	t.same(asked, { LINEN })
+	t.eq(lines[2].left, icons:Inline('store', 0, 'color.text.secondary') .. ' Vendor (each)')
+	t.eq(lines[2].right, FakeGame.coins('40c'))
+	t.eq(lines[3].left, 'Auction house (each)')
+	addon.vendorPrices = nil
+	t.eq(game:ShowItemTooltip(LINEN)[2].left, 'Auction house (each)', 'no vendor prices, no row')
+	t.same(addon.errors, {})
+end)
+
+t.test('the host Tooltip class survives every feature loading', function()
+	local _, addon = startWithTable()
+	t.eq(type(addon.Tooltip.new), 'function', 'ns.Tooltip is still the host class')
+	t.eq(addon.Tooltip.SEPARATOR_KIND, 'separator')
+	t.eq(addon.Tooltip.vendorError, nil, 'the feature keeps its state on its own table')
+	t.truthy(addon.TooltipFeature ~= addon.Tooltip)
+end)
+
+t.test('a vendor price lookup that fails drops only the Vendor row', function()
+	local game, addon = startWithTable()
+	addon.vendorPrices = {
+		BuyPrice = function()
+			error('vendor store broke')
+		end,
+	}
+	local lines = game:ShowItemTooltip(LINEN)
+	t.eq(lines[2].left, 'Auction house (each)')
+	t.eq(lines[4].left, HEADER_ICON, 'the Sell section still shows')
+	t.truthy(addon.TooltipFeature.vendorError:find('vendor store broke', 1, true), 'the first error is kept')
+	addon.vendorPrices.BuyPrice = function()
+		error('second failure')
+	end
+	game:ShowItemTooltip(LINEN)
+	t.eq(addon.TooltipFeature.vendorError:find('second failure', 1, true), nil, 'only the first')
+	t.same(game.printed, {}, 'never printed')
+	t.same(addon.errors, {})
+end)
+
+t.test('vendor details follow the detail block: the chosen modifier, Never and Always', function()
+	local game, addon = startWithTable()
+	addon.vendorPrices = {
+		BuyPrice = function()
+			return DISCOUNTED_READ
+		end,
+	}
+	local function hasDetails()
+		return find(game:ShowItemTooltip(LINEN), 'Sold by') ~= nil
+	end
+	t.eq(hasDetails(), false, 'no modifier held')
+	game.modifiers.shift = true
+	game:Fire('MODIFIER_STATE_CHANGED', 'LSHIFT', 1)
+	t.truthy(find(game.env.GameTooltip.lines, 'Sold by'), 'Shift, the default modifier, through the redraw')
+	t.truthy(find(game.env.GameTooltip.lines, 'Vendor pays'), 'with the detail vendor line beside it')
+	addon.host.RunCommand('set tooltip.detailModifier ctrl')
+	t.eq(hasDetails(), false, 'Shift is not the chosen modifier now')
+	game.modifiers.shift, game.modifiers.ctrl = false, true
+	t.eq(hasDetails(), true, 'Ctrl opens them')
+	addon.host.RunCommand('set tooltip.detailModifier alt')
+	t.eq(hasDetails(), false, 'Ctrl is not the chosen modifier now')
+	game.modifiers.ctrl, game.modifiers.alt = false, true
+	t.eq(hasDetails(), true, 'Alt opens them')
+	game.modifiers.alt = false
+	game:Fire('MODIFIER_STATE_CHANGED', 'LALT', 1)
+	t.eq(find(game.env.GameTooltip.lines, 'Sold by'), nil, 'letting go of Alt closes them through the redraw')
+	game.modifiers.alt = true
+	addon.host.RunCommand('set tooltip.detailMode off')
+	t.eq(hasDetails(), false, 'Never hides them, modifier or not')
+	game.modifiers.alt = false
+	addon.host.RunCommand('set tooltip.detailMode always')
+	t.eq(hasDetails(), true, 'Always shows them with no modifier, the gamepad path')
+	addon.host.RunCommand('set tooltip.detailVendorInfo off')
+	t.eq(hasDetails(), false, 'the vendor details setting hides them')
+	t.truthy(find(game.env.GameTooltip.lines, 'Vendor pays'), 'Vendor pays follows its own setting')
+	t.same(addon.errors, {})
+end)
+
+t.test('the tooltip settings: vendor details on by default, no sell time settings', function()
+	local _, addon = startWithTable()
+	local byKey = {}
+	for _, setting in ipairs(addon.host.Module('tooltip').definition.settings) do
+		byKey[setting.key] = setting
+	end
+	t.eq(byKey.detailVendorInfo.label, 'Detail: vendor details')
+	t.eq(byKey.detailVendorInfo.default, true)
+	t.eq(byKey.detailVendor.label, 'Detail: vendor pays')
+	t.eq(byKey.detailSellTime, nil)
+	t.eq(byKey.sellTimeNote, nil)
 end)
 
 t.test('shown rules come from the store, default first', function()
 	local game, addon = startWithTable()
 	addon.store.db.shownRules.tooltip = { 'median' }
 	local lines = game:ShowItemTooltip(LINEN)
-	t.eq(lines[2].left, 'Realistic')
-	t.eq(lines[3].left, 'Median')
-	t.eq(lines[3].right, FakeGame.coins('1s 20c'))
+	t.eq(lines[5].left, 'Price', 'the default rule prices the Sell section')
+	t.eq(#lines, 6, 'the other rules wait for the detail view')
+	addon.host.RunCommand('set tooltip.detailMode always')
+	lines = game:ShowItemTooltip(LINEN)
+	t.eq(lines[6].left, ' ', 'the detail block opens with its own separator')
+	t.eq(lines[7].left, 'Median')
+	t.eq(lines[7].right, FakeGame.coins('1s 20c'))
 end)
 
 t.test('detail mode and modifier are settings', function()
 	local game, addon = startWithTable()
 	addon.host.RunCommand('set tooltip.detailMode always')
-	t.truthy(#game:ShowItemTooltip(LINEN) > 4)
+	t.truthy(#game:ShowItemTooltip(LINEN) > 6)
 	addon.host.RunCommand('set tooltip.detailMode modifier')
 	addon.host.RunCommand('set tooltip.detailModifier alt')
 	game.modifiers.alt = true
 	local lines = game:ShowItemTooltip(LINEN)
-	t.truthy(#lines > 4)
-	t.eq(lines[2].left, 'Realistic', 'Alt shows the detail but not the unit view')
+	t.truthy(#lines > 6)
+	t.eq(lines[5].left, 'Price', 'Alt shows the detail, the Sell rows as they were')
 	addon.host.RunCommand('set tooltip.detailMode off')
-	t.eq(#game:ShowItemTooltip(LINEN), 4)
+	t.eq(#game:ShowItemTooltip(LINEN), 6)
 end)
 
 t.test('items without data get no lines', function()
@@ -1080,7 +1635,7 @@ t.test('switching the module off removes its lines and its event, and back on re
 	t.same(game:ShowItemTooltip(LINEN), {})
 	t.eq(game.frame.events.MODIFIER_STATE_CHANGED, nil)
 	addon.host.Enable('tooltip')
-	t.eq(#game:ShowItemTooltip(LINEN), 4)
+	t.eq(#game:ShowItemTooltip(LINEN), 6)
 	t.eq(#game.postCalls, 1)
 end)
 
@@ -1144,15 +1699,17 @@ local function bagSlot(bag, slot)
 	}
 end
 
-t.test('lines: the decision reads as the badge glyph next to its word, after the prices', function()
+t.test('lines: the Signal reads as the badge glyph next to its word, first in the Sell section', function()
 	local lines = build({ stackCount = 20, advice = { decision = 'post', code = 'ah' }, icons = icons })
-	t.eq(lines[4].left, TooltipLines.DECISION_LABEL)
-	t.eq(lines[4].right, ns.Badges.decisionLabel('post', icons))
-	t.truthy(lines[4].right:find(GAVEL_PIXELS, 1, true), lines[4].right)
-	t.truthy(lines[4].right:find('Post$'), 'the word stays next to the icon')
-	t.eq(find(build({ stackCount = 20 }), TooltipLines.DECISION_LABEL), nil, 'no decision, no line')
-	t.eq(find(build({ advice = { decision = 'nonsense' }, icons = icons }), TooltipLines.DECISION_LABEL), nil)
-	t.eq(#build({ stackCount = 20, advice = { decision = 'post', code = 'ah' } }), 4, 'post: no reason line')
+	t.eq(lines[5].left, 'Signal')
+	t.eq(lines[5].right, ns.Badges.decisionLabel('post', icons))
+	t.truthy(lines[5].right:find(GAVEL_PIXELS, 1, true), lines[5].right)
+	t.truthy(lines[5].right:find('Post$'), 'the word stays next to the icon')
+	t.eq(lines[6].left, 'Price (each)', 'then the prices')
+	t.eq(find(lines, 'Decision'), nil, 'the old label is gone')
+	t.eq(find(build({ stackCount = 20 }), 'Signal'), nil, 'no decision, no line')
+	t.eq(find(build({ advice = { decision = 'nonsense' }, icons = icons }), 'Signal'), nil)
+	t.eq(#build({ stackCount = 20, advice = { decision = 'post', code = 'ah' } }), 7, 'post: no reason line')
 end)
 
 local WAIT = {
@@ -1160,119 +1717,135 @@ local WAIT = {
 	code = 'marketLow',
 	underTypicalPercent = 32,
 	gainOverVendor = 12345,
-	gainOverVendorEach = 617,
 }
 
--- The reason rows under the Decision line, as { label, value } pairs.
+-- The Sell section's small reason rows, as { label, value } pairs.
 local function reasonRows(lines)
 	local rows = {}
-	for index = 5, #lines do
-		local line = lines[index]
-		if line.right == nil then
-			break
+	for _, line in ipairs(sellLines(lines)) do
+		if line.textSize == 'small' then
+			rows[#rows + 1] = { line.left, line.right }
 		end
-		rows[#rows + 1] = { line.left, line.right }
 	end
 	return rows
 end
 
-t.test('lines: a wait says why in label and value rows right under the decision', function()
-	local lines = build({ stackCount = 20, advice = WAIT, icons = icons })
-	t.eq(lines[4].left, TooltipLines.DECISION_LABEL)
-	t.eq(lines[4].right, ns.Badges.decisionLabel('wait', icons))
-	t.same(reasonRows(lines), {
-		{ 'Lowest listing', '32% under usual' },
-		{ 'Market', 'Steady' },
-		{ 'Over vendor ×20', '+' .. TooltipLines.money(12345) },
+t.test('lines: Signal, Price (each), Price × N, then the wait reason rows last', function()
+	local lines = build({ stackCount = 12, advice = WAIT, icons = icons })
+	t.same(texts(sellLines(lines)), {
+		HEADER_ICON .. ' | ' .. PLUG_ICON .. ' 3 h',
+		'Signal | ' .. ns.Badges.decisionLabel('wait', icons),
+		'Price (each) | ' .. coins('94c'),
+		'Price × 12 | ' .. coins('11s 28c'),
+		'Lowest listing | 32% under usual',
+		'Market | Steady',
+		'Over vendor × 12 | +' .. TooltipLines.money(12345),
 	})
-	for index = 5, 7 do
+	for index = 8, 10 do
 		local row = lines[index]
 		t.eq(row.wrap, nil, 'a row never wraps')
 		t.eq(row.left:find('[.;:·]'), nil, row.left)
 		t.eq(row.right:find('[.;:·]$'), nil, row.right)
 		t.eq(row.right:find(' - ', 1, true), nil, row.right)
-		t.eq(row.left:find('Wait', 1, true), nil, 'the word Wait stays on the Decision line')
+		t.eq(row.left:find('Wait', 1, true), nil, 'the word Wait stays on the Signal line')
 	end
-	t.truthy(lines[7].right:find(COIN_ICONS.g, 1, true), 'money in coins')
+	t.truthy(lines[10].right:find(COIN_ICONS.g, 1, true), 'money in coins')
+end)
+
+t.test('lines: a low wait keeps its reason rows, then the low-confidence line closes Sell', function()
+	local reasons = { { code = 'fewSales', level = 'low', text = 'few sales' } }
+	local lowQuote = quote({
+		prices = { { ruleId = 'realistic', name = 'Realistic', isDefault = true, price = price(94, 'low', reasons) } },
+	})
+	local sell = texts(sellLines(build({ quote = lowQuote, stackCount = 12, advice = WAIT, icons = icons })))
+	t.eq(sell[3], 'Price (each) | ' .. coins('94c') .. ' ' .. LOW_ICON)
+	t.eq(sell[5], 'Lowest listing | 32% under usual')
+	t.eq(sell[#sell], 'Low confidence, few sales')
 end)
 
 t.test('lines: the wait reason rows are dimmer than the other rows, labels and values alike', function()
 	local lines = build({ stackCount = 20, advice = WAIT, icons = icons })
 	local muted = theme:Color('color.text.muted')
-	for index = 5, 7 do
+	for index = 8, 10 do
 		t.same(lines[index].color, muted, lines[index].left)
 		t.same(lines[index].rightColor, muted, lines[index].left)
 	end
-	t.same(lines[4].color, theme:Color('color.text.secondary'), 'the Decision row keeps its colours')
-	t.same(lines[4].rightColor, theme:Color('color.text.primary'))
+	t.same(lines[5].color, theme:Color('color.text.secondary'), 'the Signal row keeps its colours')
+	t.same(lines[5].rightColor, theme:Color('color.text.primary'))
 end)
 
-t.test('lines: the wait reason rows hang off the decision, small and indented a grid step', function()
+t.test('lines: the wait reason rows hang off the Sell rows, small and indented a grid step', function()
 	local lines = build({ stackCount = 20, advice = WAIT, icons = icons })
-	for index = 5, 7 do
+	for index = 8, 10 do
 		t.eq(lines[index].textSize, 'small', lines[index].left)
 		t.eq(lines[index].indent, theme:Number('space.3'), lines[index].left)
 	end
 	t.eq(theme:Number('space.3'), 16, 'a whole grid step')
-	for index = 1, 4 do
-		t.eq(lines[index].textSize, nil, lines[index].left)
-		t.eq(lines[index].indent, nil, lines[index].left)
+	for index = 1, 7 do
+		t.eq(lines[index].textSize, nil, texts(lines)[index])
+		t.eq(lines[index].indent, nil, texts(lines)[index])
 	end
 end)
 
-t.test('lines: the header shows the module icon in place of the word, its right column as before', function()
+t.test('lines: the Sell header shows the module icon in place of the word', function()
 	local lines = build({ stackCount = 20 })
 	t.eq(tocIconTexture(), 'Interface\\AddOns\\Haggler\\media\\icon.png', 'the plain module icon')
-	t.eq(lines[1].left, HEADER_ICON, 'only the icon, at the line text height')
-	t.eq(lines[1].left:find('Haggler', 1, true) ~= nil, true, 'the path names the add-on folder')
-	t.eq(lines[1].left:gsub('|T.-|t', ''), '', 'no word left beside it')
-	t.eq(lines[1].right, 'scan 12 min · table 3 h')
-	t.same(lines[1].rightColor, theme:Color('color.text.muted'))
+	t.eq(lines[4].left, HEADER_ICON, 'only the icon, at the line text height')
+	t.eq(lines[4].left:find('Haggler', 1, true) ~= nil, true, 'the path names the add-on folder')
+	t.eq(lines[4].left:gsub('|T.-|t', ''), '', 'no word left beside it')
+	t.eq(lines[4].right, PLUG_ICON .. ' 3 h')
+	t.same(lines[4].rightColor, theme:Color('color.text.muted'))
+	t.eq(lines[1].left, CART_ICON, 'the Buy header shows the shopping cart')
 end)
 
-t.test('lines: the wait gain follows the view, a unit in the unit view as the prices do', function()
-	local each = build({ stackCount = 20, advice = WAIT, icons = icons, isUnitView = true })
-	t.same(reasonRows(each)[3], { 'Over vendor' .. TooltipLines.EACH_SUFFIX, '+' .. TooltipLines.money(617) })
+t.test('lines: the wait gain is the stack gain, a single item without a count', function()
+	t.same(reasonRows(build({ stackCount = 20, advice = WAIT, icons = icons }))[3], {
+		'Over vendor × 20',
+		'+' .. TooltipLines.money(12345),
+	})
 	local single = build({ stackCount = 1, advice = WAIT, icons = icons })
 	t.same(reasonRows(single)[3], { 'Over vendor', '+' .. TooltipLines.money(12345) })
 end)
 
-t.test('lines: a unit gain under a copper shows the stack gain, labelled as the stack', function()
-	local small = {
-		decision = 'wait',
-		code = 'marketLow',
-		underTypicalPercent = 32,
-		gainOverVendor = 15,
-		gainOverVendorEach = 0,
-	}
-	local rows = reasonRows(build({ stackCount = 20, advice = small, icons = icons, isUnitView = true }))
-	t.same(rows[3], { 'Over vendor ×20', '+' .. TooltipLines.money(15) })
-	t.eq(rows[3][1]:find(TooltipLines.EACH_SUFFIX, 1, true), nil, 'a stack gain never says each')
-end)
-
-t.test('lines: the wait reason shows in the detail view too', function()
+t.test('lines: the wait reason shows in the detail view too, still in the Sell section', function()
 	local lines = build({ stackCount = 20, advice = WAIT, icons = icons, isDetail = true })
 	t.same(reasonRows(lines)[1], { 'Lowest listing', '32% under usual' })
 end)
 
 t.test('lines: a wait missing its facts still names the decision, without a reason', function()
 	local lines = build({ stackCount = 20, advice = { decision = 'wait', code = 'marketLow' }, icons = icons })
-	t.eq(lines[4].left, TooltipLines.DECISION_LABEL)
+	t.eq(lines[5].left, 'Signal')
 	t.eq(find(lines, 'Lowest listing'), nil)
-	t.eq(#lines, 4, 'no reason rows')
+	t.eq(#lines, 7, 'no reason rows')
+end)
+
+t.test('lines: every row is one short line with no tooltip-only facts and no credit', function()
+	local credited = quote()
+	credited.credit = 'Prices from AHledger (ahledger.com)'
+	local lines = build({ quote = credited, stackCount = 12, advice = WAIT, icons = icons })
+	t.eq(find(lines, 'AHledger'), nil, 'the credit lives in the options panel and the window footer')
+	for _, line in ipairs(lines) do
+		if line.kind ~= TooltipLines.SEPARATOR then
+			t.eq(line.wrap, nil, line.left)
+			local plain = (line.left .. ' ' .. (line.right or '')):gsub('|T.-|t', 'II')
+			t.truthy(#plain <= 36, plain)
+			t.eq(plain:find('%.$'), nil, plain)
+			t.eq(plain:find('[;·]'), nil, plain)
+		end
+	end
 end)
 
 t.test('module: a bag slot tooltip names the decision its badge shows', function()
 	local game, addon = startWithTable()
 	game.containerItems['0:3'] = { itemID = LINEN, stackCount = 20 }
 	game.env.GameTooltip.owner = bagSlot(0, 3)
-	local line = find(game:ShowItemTooltip(LINEN), TooltipLines.DECISION_LABEL)
+	local line = find(game:ShowItemTooltip(LINEN), TooltipLines.SIGNAL_LABEL)
 	t.truthy(line and line:find(GAVEL_PIXELS, 1, true), tostring(line))
 	t.truthy(line and line:find('Post', 1, true), tostring(line))
 	game.containerItems['0:3'] = { itemID = LINEN, stackCount = 20, isBound = true }
-	t.eq(find(game:ShowItemTooltip(LINEN), TooltipLines.DECISION_LABEL), nil, 'bound: no decision')
+	t.eq(find(game:ShowItemTooltip(LINEN), TooltipLines.SIGNAL_LABEL), nil, 'bound: no decision')
 	game.env.GameTooltip.owner = nil
-	t.eq(find(game:ShowItemTooltip(LINEN), TooltipLines.DECISION_LABEL), nil, 'not in the bags: no decision')
+	t.eq(find(game:ShowItemTooltip(LINEN), TooltipLines.SIGNAL_LABEL), nil, 'not in the bags: no decision')
 	t.same(addon.errors, {})
 end)
 
@@ -1304,20 +1877,20 @@ t.test('module: the wait reason rows reach the tooltip small, indented and muted
 	addon.Advice.forItem = forItem
 	local muted, secondary = theme:Color('color.text.muted'), theme:Color('color.text.secondary')
 	local small, normal = game.env.GameTooltipTextSmall, game.env.GameTooltipText
-	local decisionIndex
+	local signalIndex
 	for index, line in ipairs(lines) do
-		if line.left == TooltipLines.DECISION_LABEL then
-			decisionIndex = index
+		if line.left == TooltipLines.SIGNAL_LABEL then
+			signalIndex = index
 		end
 	end
-	t.truthy(decisionIndex, 'a Decision line')
+	t.truthy(signalIndex, 'a Signal line')
 	t.same(
-		{ lines[decisionIndex].lr, lines[decisionIndex].lg, lines[decisionIndex].lb },
+		{ lines[signalIndex].lr, lines[signalIndex].lg, lines[signalIndex].lb },
 		{ secondary.r, secondary.g, secondary.b }
 	)
-	t.same({ lineFonts(game, tooltip, decisionIndex) }, { normal, normal })
-	t.same({ lineFonts(game, tooltip, decisionIndex - 1) }, { normal, normal }, 'the price row above')
-	for index = decisionIndex + 1, decisionIndex + 3 do
+	t.same({ lineFonts(game, tooltip, signalIndex) }, { normal, normal })
+	t.same({ lineFonts(game, tooltip, signalIndex + 2) }, { normal, normal }, 'the price rows')
+	for index = signalIndex + 3, signalIndex + 5 do
 		local line = lines[index]
 		t.eq(line.left:sub(1, #SPACER_16), SPACER_16, line.left)
 		t.same(
@@ -1332,6 +1905,6 @@ t.test('module: the wait reason rows reach the tooltip small, indented and muted
 			'the muted colour reaches the font strings'
 		)
 	end
-	t.same({ lineFonts(game, tooltip, decisionIndex + 4) }, { normal, normal }, 'the credit below')
+	t.same({ lineFonts(game, tooltip, signalIndex + 6) }, { normal, normal }, 'the closing line below')
 	t.same(addon.errors, {})
 end)
