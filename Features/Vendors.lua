@@ -14,6 +14,8 @@ local _, ns = ...
 local MODULE_KEY = 'vendors'
 local EVENT_OWNER = 'vendors'
 local MERCHANT_EVENTS = { 'MERCHANT_SHOW', 'MERCHANT_UPDATE' }
+-- One sentence, so no full stop.
+local VENDOR_LOOKUP_FAILED = "The tooltip couldn't read vendor prices this session"
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local scheduleRead, readMerchant, statusLines
@@ -121,7 +123,7 @@ function statusLines()
 		seedCount = seedCount + 1
 	end
 	local maxKB = state.module and state.module:Setting('maxKB')
-	return {
+	local lines = {
 		string.format(
 			'Merchant record: %d vendor%s, %d item%s, %.1f of %d KB',
 			summary.vendors,
@@ -138,4 +140,9 @@ function statusLines()
 			ns.VendorSeed and ns.VendorSeed.build or 'none'
 		),
 	}
+	-- The raw error stays in ns.TooltipFeature.vendorError; the player gets one plain line.
+	if ns.TooltipFeature and ns.TooltipFeature.vendorError then
+		lines[#lines + 1] = VENDOR_LOOKUP_FAILED
+	end
+	return lines
 end

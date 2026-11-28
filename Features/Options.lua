@@ -238,9 +238,14 @@ function refreshLegacyPanel(panel)
 end
 
 -- A switch names its module in brackets after it, unless the label already names it as a whole
--- word. Labels carry no brackets of their own, so the two never stack.
+-- word. Labels carry no brackets of their own, so the two never stack. The word frontier applies
+-- only on a side whose edge is a letter or digit: a name ending in punctuation, like
+-- "Sorter (by Author)", has no word edge there to find.
 function switchLabel(label, moduleName)
-	local pattern = '%f[%w]' .. moduleName:lower():gsub('%p', '%%%0') .. '%f[%W]'
+	local name = moduleName:lower()
+	local pattern = (name:find('^%w') and '%f[%w]' or '')
+		.. name:gsub('%p', '%%%0')
+		.. (name:find('%w$') and '%f[%W]' or '')
 	if label:lower():find(pattern) then
 		return label
 	end

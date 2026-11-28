@@ -6,8 +6,8 @@
 	  input = { quote, stackCount, isDetail, options, theme, advice?, icons?, vendorBuy? }
 	  advice    = Advice.forItem's BagAdvice for a bag slot
 	  vendorBuy = VendorPrices:BuyPrice's BuyPrice, what a vendor charges for the item
-	  options = { detailTrace, detailSales, detailListings, detailVendor, detailSellTime,
-	              sellTimeNote }
+	  options = { detailTrace, detailSales, detailListings, detailVendor, detailVendorInfo }
+	  detailVendor is the Vendor pays line; detailVendorInfo the Buy vendor detail rows
 
 	The lines come in sections with a separator line ({ kind = 'separator' }, which the host
 	draws as a rule) between each two. A section without rows is left out, separator and all.
@@ -22,7 +22,8 @@
 	below the vendor's base (BuyPrice.isBasePrice false) carries the discount icon after it, or
 	"Discounted" without the atlas. While the detail block shows, small rows go under it: who
 	sold it, the standing it was read at as a word (left out when the price is a base kept from
-	an earlier read), how long ago it was read, and "Limited stock"; each only when known. With a vendor price and no listing the header carries
+	an earlier read), how long ago it was read, and "Limited stock"; each only when known, and
+	only while detailVendorInfo is on. With a vendor price and no listing the header carries
 	no age.
 
 	Sell: a header (the module icon) with the age of the default price's base, after its source's
@@ -42,16 +43,13 @@
 
 	Detail, a section of its own after Sell: the other shown rules (Minimum and the like) for
 	the stack, how the default rule got its price, every confidence reason, sales a day,
-	listings, vendor price and an estimated sell time with its note.
+	listings and what a vendor pays. There is no sell time (user decision).
 
 	A label line stays short and anything that can grow long goes on a wrapped line of its own,
 	so Haggler's own lines keep the tooltip narrow (an item name or another add-on may still
 	widen it). Money reads with the game's coin icons, by texture path, as GetCoinTextureString
 	writes it. The price source's credit is not in the tooltip: the options panel and the
 	window footer carry it.
-
-	Sell time = (units listed at or under the price + this stack) / units sold a day. It is an
-	estimate from sales per day, not in-game time, and low confidence under one sale a day.
 ]]
 local _, ns = ...
 
@@ -84,7 +82,6 @@ TooltipLines.AUCTION_HOUSE_LABEL = 'Auction house'
 TooltipLines.PRICE_LABEL = 'Price'
 TooltipLines.SIGNAL_LABEL = 'Signal'
 TooltipLines.LOW_CONFIDENCE = 'Low confidence'
-TooltipLines.SLOW_SELL_REASON = 'under 1 sale a day'
 -- Why an item waits, one label and value row each; the Signal line already says Wait. A wait
 -- only ever happens in a steady market (Advice), so Market always reads Steady.
 TooltipLines.WAIT_LOWEST_LABEL = 'Lowest listing'
@@ -99,7 +96,6 @@ TooltipLines.EACH_SUFFIX = ' (each)'
 TooltipLines.QUANTITY_MARK = ' × '
 -- A count in its own column carries the sign too: '× 60'.
 TooltipLines.COUNT_MARK = '× '
-TooltipLines.SELL_TIME_NOTE = 'estimate from sales per day, not in-game time'
 TooltipLines.OWN_SALES_VALUE = 'Own scans'
 -- The price sources a header can name by icon, keyed by Price.source and facts.lowestListedSource.
 local SOURCE_AGE_ICONS = { scan = TooltipLines.SCAN_AGE_ICON, ahledger = TooltipLines.TABLE_AGE_ICON }
@@ -133,7 +129,7 @@ local LINE_HEIGHT_ICON = 0
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local appendSection, buySection, sellSection, detailSection, buyHeaderLine, sellHeaderLine, auctionHouseRow
 local sellPriceRows, priceRow, ageText, traceLines, reasonLines, salesLines, listingsLines, vendorLine
-local sellTimeLines, hasAnyData, defaultEntry, color, unitsAtOrUnder, formatSellTime, levelIcon, topLowReason
+local hasAnyData, defaultEntry, color, levelIcon, topLowReason
 local lowReasonLine, capitalized, iconSetFor, signalLine, waitReasonRows, reasonRow, stackSuffix, detailRow
 local sellAgesText, vendorRow, isPositiveFinite, vendorPriceText, vendorDetailRows
 -- One icon set per theme, built on first use instead of on every hover.
@@ -152,6 +148,7 @@ function TooltipLines.build(input)
 		theme = input.theme,
 		icons = input.icons or iconSetFor(input.theme),
 		isDetail = input.isDetail,
+		isVendorInfoShown = (input.options or {}).detailVendorInfo ~= false,
 		vendorBuy = type(input.vendorBuy) == 'table' and input.vendorBuy or nil,
 	}
 	local advice = type(input.advice) == 'table' and input.advice or nil
@@ -204,18 +201,6 @@ function TooltipLines.ago(seconds)
 	return age == 'just now' and age or (age .. ' ago')
 end
 
---- Days until a stack sells at a unit price, or nil without sales data.
---- @return number|nil days
---- @return boolean isLowConfidence
-function TooltipLines.sellTimeDays(facts, unitPrice, stack)
-	local salesPerDay = facts.salesPerDay
-	if not salesPerDay or salesPerDay <= 0 then
-		return nil, true
-	end
-	local days = (unitsAtOrUnder(facts.levels, unitPrice) + stack) / salesPerDay
-	return days, salesPerDay < ns.Rules.CONFIDENCE.lowSalesPerDay
-end
-
 -- Helpers ---------------------------------------------------------------------------------
 
 -- Adds a section under the lines so far, a separator between; an empty section adds nothing.
@@ -240,7 +225,7 @@ function buySection(quote, view)
 		local row = buildRow(quote, view)
 		if row then
 			rows[#rows + 1] = row
-			if buildRow == vendorRow and view.isDetail then
+			if buildRow == vendorRow and view.isDetail and view.isVendorInfoShown then
 				vendorDetailRows(rows, view.vendorBuy, view)
 			end
 		end
@@ -292,9 +277,6 @@ function detailSection(quote, options, view)
 	end
 	if options.detailVendor ~= false and quote.facts.vendor and quote.facts.vendor > 0 then
 		detail[#detail + 1] = vendorLine(quote.facts, view)
-	end
-	if options.detailSellTime ~= false and main and main.price then
-		sellTimeLines(detail, main.price, quote.facts, view.stackCount, options.sellTimeNote ~= false, view)
 	end
 	return detail
 end
@@ -600,49 +582,6 @@ function vendorLine(facts, view)
 		color = color(view, 'color.text.muted'),
 		rightColor = color(view, 'color.text.secondary'),
 	}
-end
-
-function sellTimeLines(detail, price, facts, stack, hasNote, view)
-	local days, isLow = TooltipLines.sellTimeDays(facts, price.copper, stack)
-	local right = days and formatSellTime(days) or 'unknown, no sales data'
-	if days and isLow then
-		right = right .. ' ' .. levelIcon('low', view)
-	end
-	detail[#detail + 1] = {
-		left = 'Sell time',
-		right = right,
-		color = color(view, 'color.text.muted'),
-		rightColor = color(view, 'color.text.secondary'),
-	}
-	if days and isLow then
-		detail[#detail + 1] = lowReasonLine({ text = TooltipLines.SLOW_SELL_REASON }, view)
-	end
-	if hasNote and days then
-		detail[#detail + 1] =
-			{ left = '  ' .. TooltipLines.SELL_TIME_NOTE, color = color(view, 'color.text.muted'), wrap = true }
-	end
-end
-
-function formatSellTime(days)
-	if days < 1 then
-		return string.format('~%d h', math.max(1, math.floor(days * 24 + 0.5)))
-	end
-	if days < 10 then
-		return string.format('~%.1f days', days)
-	end
-	return string.format('~%d days', math.floor(days + 0.5))
-end
-
-function unitsAtOrUnder(levels, unitPrice)
-	local units = 0
-	for _, level in ipairs(levels or {}) do
-		if type(level) == 'table' and type(level.price) == 'number' and type(level.qty) == 'number' then
-			if level.price <= unitPrice then
-				units = units + level.qty
-			end
-		end
-	end
-	return units
 end
 
 function hasAnyData(quote)

@@ -215,13 +215,14 @@ local DISCOUNTED_READ = {
 	ageSeconds = 3 * 86400,
 	cheapestVendor = { npcId = 7, name = 'Gina Lang', reaction = 6, priceFromBase = false },
 }
--- Vendor details show with the detail block only; these options keep that block to the vendor.
+-- Vendor details show with the detail block only. These options switch the detail section's
+-- own rows off, the Vendor pays line too. The Buy vendor details have their own option
+-- (detailVendorInfo), left at its default, on.
 local VENDOR_ONLY = {
 	detailTrace = false,
 	detailSales = false,
 	detailListings = false,
 	detailVendor = false,
-	detailSellTime = false,
 }
 
 -- The Buy section's lines, header first, as texts.
@@ -331,11 +332,26 @@ t.test('with the detail block the Buy vendor price and the vendor pays line stan
 		stackCount = 20,
 		vendorBuy = DISCOUNTED_READ,
 		isDetail = true,
-		options = { detailTrace = false, detailSales = false, detailListings = false, detailSellTime = false },
+		options = { detailTrace = false, detailSales = false, detailListings = false },
 	})
 	t.truthy(find(lines, STORE_ICON .. ' Vendor (each) | ' .. coins('40c')), 'what a vendor charges')
 	t.truthy(find(lines, 'Vendor pays × 20 | ' .. coins('2s 60c')), 'what a vendor pays, in the detail block')
 	t.truthy(find(build({ stackCount = 1, isDetail = true, options = { detailTrace = false } }), 'Vendor pays | '))
+end)
+
+t.test('the vendor details setting hides the Buy detail rows; Vendor pays keeps its own setting', function()
+	local options = { detailTrace = false, detailVendorInfo = false }
+	local lines = build({ stackCount = 20, vendorBuy = DISCOUNTED_READ, isDetail = true, options = options })
+	t.same(buyTexts(lines), {
+		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
+		STORE_ICON .. ' Vendor (each) | ' .. coins('40c') .. ' ' .. PERCENT_ICON,
+		'Auction house (each) | ' .. coins('90c'),
+	})
+	t.truthy(find(lines, 'Vendor pays × 20 | ' .. coins('2s 60c')), 'detailVendor still on')
+	local payOff = build({ vendorBuy = DISCOUNTED_READ, isDetail = true, options = { detailVendor = false } })
+	t.truthy(find(payOff, 'Sold by | Gina Lang'), 'detailVendor leaves the vendor details alone')
+	t.truthy(find(payOff, 'Limited stock'))
+	t.eq(find(payOff, 'Vendor pays'), nil)
 end)
 
 t.test('without the icon atlas the discount reads as a word', function()
@@ -532,7 +548,7 @@ t.test('an item Haggler knows nothing about gets no lines', function()
 	t.same(build({ quote = unknown, isDetail = true }), {})
 end)
 
-t.test('detail: the trace, reasons, sales, listings, vendor and sell time with its note', function()
+t.test('detail: the trace, reasons, sales, listings and vendor pays, no sell time', function()
 	local reasons = {
 		{ code = 'stale', level = 'medium', text = 'AHledger data is 30 hours old' },
 	}
@@ -574,8 +590,6 @@ t.test('detail: the trace, reasons, sales, listings, vendor and sell time with i
 		'Listed | × 60',
 		'Price levels | 2',
 		'Vendor pays × 20 | ' .. coins('2s 60c'),
-		'Sell time | ~21 h', -- (20 listed under 98c + 20) / 45 a day
-		'  ' .. TooltipLines.SELL_TIME_NOTE,
 	})
 end)
 
@@ -589,7 +603,6 @@ t.test('detail lines follow their settings; the reasons always show', function()
 		detailSales = false,
 		detailListings = false,
 		detailVendor = false,
-		detailSellTime = false,
 	}
 	t.same(texts(build({ quote = lowQuote, isDetail = true, options = options })), {
 		CART_ICON .. ' | ' .. SEARCH_ICON .. ' 12 min',
@@ -612,7 +625,7 @@ t.test('detail lines that can grow long wrap at the tooltip width', function()
 		facts = { salesPerDay = 0.2, levels = {} },
 	})
 	local lines = build({ quote = lowQuote, isDetail = true, options = { detailTrace = false } })
-	for _, text in ipairs({ 'old data', 'no price, too few sales', 'under 1 sale a day', TooltipLines.SELL_TIME_NOTE }) do
+	for _, text in ipairs({ 'old data', 'no price, too few sales' }) do
 		local isFound = false
 		for _, line in ipairs(lines) do
 			if (line.left or ''):find(text, 1, true) then
@@ -662,46 +675,27 @@ t.test('the sales line says when sales a day is the own count', function()
 	t.eq(find(lines, 'Sales from'), 'Sales from | Own scans')
 end)
 
-t.test('the sell-time note can be switched off', function()
-	local lines = build({ isDetail = true, options = { sellTimeNote = false } })
-	t.truthy(find(lines, 'Sell time'))
-	t.eq(find(lines, TooltipLines.SELL_TIME_NOTE), nil)
+t.test('no sell time line, and saved sell time settings are ignored', function()
+	local slow = quote({ facts = { salesPerDay = 0.2, levels = {} } })
+	local options = { detailSellTime = true, sellTimeNote = true }
+	for _, lines in ipairs({ build({ isDetail = true, quote = slow }), build({ isDetail = true, options = options }) }) do
+		for _, text in ipairs(texts(lines)) do
+			t.eq(text:find('Sell time', 1, true), nil, text)
+			t.eq(text:find('under 1 sale a day', 1, true), nil, text)
+			t.eq(text:find('not in-game time', 1, true), nil, text)
+		end
+	end
+	t.eq(TooltipLines.sellTimeDays, nil)
+	t.eq(TooltipLines.SELL_TIME_NOTE, nil)
 end)
 
-t.test('without sales data the sell time is unknown and has no note', function()
+t.test('without sales data the sales line reads unknown', function()
 	local lines = build({
 		isDetail = true,
 		quote = quote({ facts = { listedUnits = 3, levelCount = 1, levels = { { price = 90, qty = 3 } } } }),
 	})
-	t.eq(find(lines, 'Sell time'), 'Sell time | unknown, no sales data')
 	t.eq(find(lines, 'Sold a day'), 'Sold a day | unknown')
-	t.eq(find(lines, TooltipLines.SELL_TIME_NOTE), nil)
 	t.eq(find(lines, 'Vendor'), nil)
-end)
-
-t.test('sell time counts the units at or under the price plus the stack', function()
-	local facts =
-		{ salesPerDay = 10, levels = { { price = 90, qty = 20 }, { price = 94, qty = 5 }, { price = 99, qty = 40 } } }
-	t.eq((TooltipLines.sellTimeDays(facts, 94, 5)), 3)
-	t.eq((TooltipLines.sellTimeDays(facts, 89, 5)), 0.5)
-	local days, isLow = TooltipLines.sellTimeDays({ salesPerDay = 0.5, levels = {} }, 94, 1)
-	t.eq(days, 2)
-	t.eq(isLow, true, 'under one sale a day')
-	t.eq(select(2, TooltipLines.sellTimeDays(facts, 94, 5)), false)
-	t.eq(TooltipLines.sellTimeDays({ salesPerDay = 0 }, 94, 1), nil)
-	t.eq(TooltipLines.sellTimeDays({ levels = { 'junk', { price = '1', qty = 2 } }, salesPerDay = 1 }, 94, 1), 1)
-end)
-
-t.test('a slow sell time is marked low, with the reason wrapped below', function()
-	local lines = build({ isDetail = true, quote = quote({ facts = { salesPerDay = 0.2, levels = {} } }) })
-	local texted = texts(lines)
-	for index, text in ipairs(texted) do
-		if text:find('Sell time', 1, true) then
-			t.eq(text, 'Sell time | ~5.0 days ' .. LOW_ICON)
-			t.eq(texted[index + 1], 'Low confidence, under 1 sale a day')
-		end
-	end
-	t.truthy(find(lines, 'Sell time'))
 end)
 
 t.test('money and ages read short', function()
@@ -1524,6 +1518,14 @@ t.test('the Buy section reads what a vendor charges from VendorPrices, and nothi
 	t.same(addon.errors, {})
 end)
 
+t.test('the host Tooltip class survives every feature loading', function()
+	local _, addon = startWithTable()
+	t.eq(type(addon.Tooltip.new), 'function', 'ns.Tooltip is still the host class')
+	t.eq(addon.Tooltip.SEPARATOR_KIND, 'separator')
+	t.eq(addon.Tooltip.vendorError, nil, 'the feature keeps its state on its own table')
+	t.truthy(addon.TooltipFeature ~= addon.Tooltip)
+end)
+
 t.test('a vendor price lookup that fails drops only the Vendor row', function()
 	local game, addon = startWithTable()
 	addon.vendorPrices = {
@@ -1534,12 +1536,12 @@ t.test('a vendor price lookup that fails drops only the Vendor row', function()
 	local lines = game:ShowItemTooltip(LINEN)
 	t.eq(lines[2].left, 'Auction house (each)')
 	t.eq(lines[4].left, HEADER_ICON, 'the Sell section still shows')
-	t.truthy(addon.Tooltip.vendorError:find('vendor store broke', 1, true), 'the first error is kept')
+	t.truthy(addon.TooltipFeature.vendorError:find('vendor store broke', 1, true), 'the first error is kept')
 	addon.vendorPrices.BuyPrice = function()
 		error('second failure')
 	end
 	game:ShowItemTooltip(LINEN)
-	t.eq(addon.Tooltip.vendorError:find('second failure', 1, true), nil, 'only the first')
+	t.eq(addon.TooltipFeature.vendorError:find('second failure', 1, true), nil, 'only the first')
 	t.same(game.printed, {}, 'never printed')
 	t.same(addon.errors, {})
 end)
@@ -1563,12 +1565,36 @@ t.test('vendor details follow the detail block: the chosen modifier, Never and A
 	t.eq(hasDetails(), false, 'Shift is not the chosen modifier now')
 	game.modifiers.shift, game.modifiers.ctrl = false, true
 	t.eq(hasDetails(), true, 'Ctrl opens them')
+	addon.host.RunCommand('set tooltip.detailModifier alt')
+	t.eq(hasDetails(), false, 'Ctrl is not the chosen modifier now')
+	game.modifiers.ctrl, game.modifiers.alt = false, true
+	t.eq(hasDetails(), true, 'Alt opens them')
+	game.modifiers.alt = false
+	game:Fire('MODIFIER_STATE_CHANGED', 'LALT', 1)
+	t.eq(find(game.env.GameTooltip.lines, 'Sold by'), nil, 'letting go of Alt closes them through the redraw')
+	game.modifiers.alt = true
 	addon.host.RunCommand('set tooltip.detailMode off')
 	t.eq(hasDetails(), false, 'Never hides them, modifier or not')
-	game.modifiers.ctrl = false
+	game.modifiers.alt = false
 	addon.host.RunCommand('set tooltip.detailMode always')
 	t.eq(hasDetails(), true, 'Always shows them with no modifier, the gamepad path')
+	addon.host.RunCommand('set tooltip.detailVendorInfo off')
+	t.eq(hasDetails(), false, 'the vendor details setting hides them')
+	t.truthy(find(game.env.GameTooltip.lines, 'Vendor pays'), 'Vendor pays follows its own setting')
 	t.same(addon.errors, {})
+end)
+
+t.test('the tooltip settings: vendor details on by default, no sell time settings', function()
+	local _, addon = startWithTable()
+	local byKey = {}
+	for _, setting in ipairs(addon.host.Module('tooltip').definition.settings) do
+		byKey[setting.key] = setting
+	end
+	t.eq(byKey.detailVendorInfo.label, 'Detail: vendor details')
+	t.eq(byKey.detailVendorInfo.default, true)
+	t.eq(byKey.detailVendor.label, 'Detail: vendor pays')
+	t.eq(byKey.detailSellTime, nil)
+	t.eq(byKey.sellTimeNote, nil)
 end)
 
 t.test('shown rules come from the store, default first', function()

@@ -4,8 +4,8 @@
 	unit and for the stack), each with its data age. The detail block shows always, on a
 	modifier, or never. A gamepad modifier works through the client's GamePadEmulateShift /
 	Ctrl / Alt mapping. Holding or letting go of a modifier redraws the tooltip at once; the detail
-	block also opens the Vendor row's details. Tooltip.vendorError keeps the first vendor price
-	lookup failure. Over a
+	block also opens the Vendor row's details. ns.TooltipFeature.vendorError keeps the first
+	vendor price lookup failure (ns.Tooltip is the host's tooltip class, never this). Over a
 	bag slot the Sell section also names Haggler's decision for the item (Advice.forItem) as its
 	Signal, with the decision glyph, and for a Wait the reason under the prices. The line stands
 	on its own: it shows where the badge does not (its setting off, the client's junk coin in
@@ -14,8 +14,8 @@
 ]]
 local _, ns = ...
 
-local Tooltip = {}
-ns.Tooltip = Tooltip
+local TooltipFeature = {}
+ns.TooltipFeature = TooltipFeature
 
 -- Helpers live at the bottom of the file; declared here so they stay local.
 local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons, vendorBuyPrice
@@ -23,8 +23,8 @@ local buildLines, isDetailShown, detailOptions, bagAdvice, tooltipIcons, vendorB
 local icons
 
 local MODULE_KEY = 'tooltip'
-local DETAIL_TOGGLES =
-	{ 'detailTrace', 'detailSales', 'detailListings', 'detailVendor', 'detailSellTime', 'sellTimeNote' }
+-- Saved detailSellTime and sellTimeNote values from earlier versions are ignored.
+local DETAIL_TOGGLES = { 'detailTrace', 'detailSales', 'detailListings', 'detailVendor', 'detailVendorInfo' }
 
 local function toggle(key, label)
 	return { key = key, type = 'toggle', label = label, default = true }
@@ -60,8 +60,7 @@ ns.host.AddModule({
 		toggle('detailSales', 'Detail: units sold a day'),
 		toggle('detailListings', 'Detail: units and prices listed in the last scan'),
 		toggle('detailVendor', 'Detail: vendor pays'),
-		toggle('detailSellTime', 'Detail: estimated sell time'),
-		toggle('sellTimeNote', 'Note under the sell time that it is an estimate from sales per day'),
+		toggle('detailVendorInfo', 'Detail: vendor details'),
 	},
 	onEnable = function(module)
 		ns.tooltips:AddProvider(MODULE_KEY, function(itemId, info)
@@ -106,7 +105,7 @@ function vendorBuyPrice(itemId)
 	end
 	local isOk, result = pcall(prices.BuyPrice, prices, itemId)
 	if not isOk then
-		Tooltip.vendorError = Tooltip.vendorError or tostring(result)
+		TooltipFeature.vendorError = TooltipFeature.vendorError or tostring(result)
 		return nil
 	end
 	return result

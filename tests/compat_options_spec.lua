@@ -285,6 +285,34 @@ t.test('the module suffix is dropped only when the label names the module as a w
 	t.eq(entriesFor('Mark vendor prices here', 'Vendor prices')[1].label, 'Mark vendor prices here')
 	t.eq(entriesFor('Vendor pricesheet', 'Vendor prices')[1].label, 'Vendor pricesheet (Vendor prices)')
 	t.eq(entriesFor('Total value of the bags', 'Bags')[1].label, 'Total value of the bags')
+	local mail = 'Auctions, mail and ledger'
+	t.eq(entriesFor('Sync auctions, mail and ledger now', mail)[1].label, 'Sync auctions, mail and ledger now')
+	t.eq(
+		entriesFor('Sync auctions, mail and ledgers', mail)[1].label,
+		'Sync auctions, mail and ledgers (Auctions, mail and ledger)',
+		'a longer last word is not the module'
+	)
+end)
+
+t.test('a module name that ends in punctuation still matches as a whole', function()
+	local _, addon = start(FakeGame.addSettingsApi)
+	local function entriesFor(label, moduleName)
+		return addon.Options.toggleEntries({
+			Modules = function()
+				return { 'm' }
+			end,
+			Schema = function()
+				return { { key = 'dots', type = 'toggle', label = label } }
+			end,
+		}, function()
+			return moduleName
+		end)
+	end
+	local thirdParty = 'Sorter (by Author)'
+	t.eq(entriesFor('Run sorter (by Author) on open', thirdParty)[1].label, 'Run sorter (by Author) on open')
+	t.eq(entriesFor('Sorter (by Author)', thirdParty)[1].label, 'Sorter (by Author)', 'the whole label')
+	t.eq(entriesFor('Run Sorter (by Author)s', thirdParty)[1].label, 'Run Sorter (by Author)s', 'no frontier after )')
+	t.eq(entriesFor('Presorter (by Author)', thirdParty)[1].label, 'Presorter (by Author) (Sorter (by Author))')
 end)
 
 t.test('legacy panel switches flip settings and open the window', function()
